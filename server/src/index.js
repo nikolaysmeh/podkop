@@ -83,8 +83,8 @@ app.post('/api/admin/create-webhook', (req, res) => {
   const password_hash = password ? bcrypt.hashSync(password, 10) : null;
 
   db.prepare(
-    'INSERT INTO endpoints (name, secret_key, username, password_hash) VALUES (?, ?, ?, ?)'
-  ).run(name, secret_key, username || null, password_hash);
+    'INSERT INTO endpoints (name, secret_key, username, password, password_hash) VALUES (?, ?, ?, ?, ?)'
+  ).run(name, secret_key, username || null, password || null, password_hash);
 
   console.log(`[admin] Webhook created: /${name} (auth: ${username ? 'basic' : 'none'})`);
 
@@ -94,6 +94,40 @@ app.post('/api/admin/create-webhook', (req, res) => {
     secretKey:  secret_key,
     auth:       username ? 'basic' : 'none',
   });
+});
+
+// ── Admin: list webhook endpoints ────────────────────────────────────────────
+
+app.get('/api/admin/webhooks', (req, res) => {
+  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const endpoints = db.prepare(
+    'SELECT name, secret_key, username, password, created_at FROM endpoints ORDER BY created_at ASC'
+  ).all();
+
+  res.json({ endpoints });
+});
+
+// ── Admin: delete webhook endpoint ───────────────────────────────────────────
+
+app.delete('/api/admin/webhooks/:name', (req, res) => {
+  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const { name } = req.params;
+  const endpoint = db.prepare('SELECT id FROM endpoints WHERE name = ?').get(name);
+  if (!endpoint) {
+    return res.status(404).json({ error: `Endpoint "${name}" not found` });
+  }
+
+  db.prepare('DELETE FROM webhooks WHERE endpoint_name = ?').run(name);
+  db.prepare('DELETE FROM endpoints WHERE name = ?').run(name);
+
+  console.log(`[admin] Webhook deleted: /${name}`);
+  res.json({ ok: true });
 });
 
 // ── Poll: return undelivered webhooks ─────────────────────────────────────────

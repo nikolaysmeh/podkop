@@ -1,0 +1,6 @@
+[
+  {
+    "secret_key": "",
+    "forward_url": "http://host.docker.internal:4000/receive"
+  }
+]

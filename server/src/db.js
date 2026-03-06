@@ -15,6 +15,7 @@ db.exec(`
     name          TEXT UNIQUE NOT NULL,
     secret_key    TEXT UNIQUE NOT NULL,
     username      TEXT,
+    password      TEXT,
     password_hash TEXT,
     created_at    TEXT DEFAULT (datetime('now'))
   );
@@ -29,5 +30,12 @@ db.exec(`
     FOREIGN KEY (endpoint_name) REFERENCES endpoints(name)
   );
 `);
+
+// Migration: add password column if it doesn't exist yet
+try {
+  db.exec('ALTER TABLE endpoints ADD COLUMN password TEXT');
+} catch {
+  // column already exists — ignore
+}
 
 module.exports = db;

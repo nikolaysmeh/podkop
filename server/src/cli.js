@@ -7,10 +7,13 @@
  * Usage (inside the container):
  *   node src/cli.js create-webhook <name>
  *   node src/cli.js create-webhook <name> <username> <password>
+ *   node src/cli.js list-webhooks
+ *   node src/cli.js delete-webhook <name>
  *
  * Via docker-compose:
  *   docker-compose exec server node src/cli.js create-webhook mywebhook
- *   docker-compose exec server node src/cli.js create-webhook mywebhook alice secret123
+ *   docker-compose exec server node src/cli.js list-webhooks
+ *   docker-compose exec server node src/cli.js delete-webhook mywebhook
  */
 
 require('dotenv').config();
@@ -21,11 +24,11 @@ const SERVER_URL   = process.env.CLI_SERVER_URL
                   || `http://localhost:${process.env.SERVER_PORT || 3000}`;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
-// ── HTTP helper ───────────────────────────────────────────────────────────────
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
 
-function postJSON(url, body, headers = {}) {
+function request(method, url, body, headers = {}) {
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body);
+    const payload = body !== undefined ? JSON.stringify(body) : null;
     const parsed  = new URL(url);
 
     const req = http.request(
@@ -33,10 +36,9 @@ function postJSON(url, body, headers = {}) {
         hostname: parsed.hostname,
         port:     parsed.port || 80,
         path:     parsed.pathname,
-        method:   'POST',
+        method,
         headers:  {
-          'Content-Type':   'application/json',
-          'Content-Length': Buffer.byteLength(payload),
+          ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
           ...headers,
         },
       },
@@ -54,10 +56,14 @@ function postJSON(url, body, headers = {}) {
     );
 
     req.on('error', reject);
-    req.write(payload);
+    if (payload) req.write(payload);
     req.end();
   });
 }
+
+const postJSON   = (url, body, headers) => request('POST',   url, body, headers);
+const getJSON    = (url, headers)       => request('GET',    url, undefined, headers);
+const deleteJSON = (url, headers)       => request('DELETE', url, undefined, headers);
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
@@ -74,9 +80,50 @@ async function createWebhook(name, username, password) {
     console.log(`  URL        : ${SERVER_URL}${webhookUrl}`);
     console.log(`  Secret key : ${secretKey}`);
     console.log(`  Auth       : ${auth === 'basic' ? `basic (user: ${username})` : 'none'}`);
-    console.log('');
-    console.log(`Set in client .env:`);
-    console.log(`  CLIENT_POLL_SECRET_KEY=${secretKey}`);
+  } else {
+    console.error(`Error ${result.status}: ${JSON.stringify(result.body)}`);
+    process.exit(1);
+  }
+}
+
+async function listWebhooks() {
+  const result = await getJSON(
+    `${SERVER_URL}/api/admin/webhooks`,
+    { 'X-Admin-Secret': ADMIN_SECRET }
+  );
+
+  if (result.status === 200) {
+    const { endpoints } = result.body;
+    if (endpoints.length === 0) {
+      console.log('No webhooks configured.');
+      return;
+    }
+    for (const ep of endpoints) {
+      console.log(`/${ep.name}`);
+      console.log(`  Secret key : ${ep.secret_key}`);
+      if (ep.username) {
+        console.log(`  Auth       : basic`);
+        console.log(`  Username   : ${ep.username}`);
+        console.log(`  Password   : ${ep.password}`);
+      } else {
+        console.log(`  Auth       : none`);
+      }
+      console.log(`  Created    : ${ep.created_at}`);
+    }
+  } else {
+    console.error(`Error ${result.status}: ${JSON.stringify(result.body)}`);
+    process.exit(1);
+  }
+}
+
+async function deleteWebhook(name) {
+  const result = await deleteJSON(
+    `${SERVER_URL}/api/admin/webhooks/${encodeURIComponent(name)}`,
+    { 'X-Admin-Secret': ADMIN_SECRET }
+  );
+
+  if (result.status === 200) {
+    console.log(`Webhook "${name}" deleted.`);
   } else {
     console.error(`Error ${result.status}: ${JSON.stringify(result.body)}`);
     process.exit(1);
@@ -107,9 +154,35 @@ async function main() {
     return;
   }
 
+  if (command === 'list-webhooks') {
+    try {
+      await listWebhooks();
+    } catch (err) {
+      console.error(`Cannot reach server at ${SERVER_URL}: ${err.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === 'delete-webhook') {
+    const [name] = args;
+    if (!name) {
+      console.error('Usage: node src/cli.js delete-webhook <name>');
+      process.exit(1);
+    }
+    try {
+      await deleteWebhook(name);
+    } catch (err) {
+      console.error(`Cannot reach server at ${SERVER_URL}: ${err.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   console.log('Commands:');
-  console.log('  node src/cli.js create-webhook <name>');
-  console.log('  node src/cli.js create-webhook <name> <username> <password>');
+  console.log('  node src/cli.js create-webhook <name> [<username> <password>]');
+  console.log('  node src/cli.js list-webhooks');
+  console.log('  node src/cli.js delete-webhook <name>');
 }
 
 main();

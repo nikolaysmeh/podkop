@@ -18,6 +18,8 @@ const ADMIN_SECRET             = process.env.ADMIN_SECRET                      |
 const CLEANUP_INTERVAL_MINUTES = parseInt(process.env.CLEANUP_INTERVAL_MINUTES) || 5;
 const WEBHOOK_MAX_AGE_MINUTES  = parseInt(process.env.WEBHOOK_MAX_AGE_MINUTES)  || 60;
 const POLL_BATCH_SIZE          = parseInt(process.env.POLL_BATCH_SIZE)          || 10;
+const MULTI_CLIENT_ENABLED     = process.env.MULTI_CLIENT_ENABLED === 'true';
+const MAX_DELIVERIES           = parseInt(process.env.MAX_DELIVERIES_PER_WEBHOOK) || 1;
 
 const RESERVED = new Set(['api', 'health', 'admin']);
 
@@ -123,11 +125,43 @@ app.delete('/api/admin/webhooks/:name', (req, res) => {
     return res.status(404).json({ error: `Endpoint "${name}" not found` });
   }
 
+  const webhookIds = db.prepare('SELECT id FROM webhooks WHERE endpoint_name = ?').all(name).map(r => r.id);
+  if (webhookIds.length > 0) {
+    const ph = webhookIds.map(() => '?').join(', ');
+    db.prepare(`DELETE FROM webhook_deliveries WHERE webhook_id IN (${ph})`).run(...webhookIds);
+  }
   db.prepare('DELETE FROM webhooks WHERE endpoint_name = ?').run(name);
   db.prepare('DELETE FROM endpoints WHERE name = ?').run(name);
 
   console.log(`[admin] Webhook deleted: /${name}`);
   res.json({ ok: true });
+});
+
+// ── Admin: stats ─────────────────────────────────────────────────────────────
+
+app.get('/api/admin/stats', (req, res) => {
+  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const endpoints = db.prepare(
+    'SELECT name FROM endpoints ORDER BY created_at ASC'
+  ).all();
+
+  const rows = endpoints.map(({ name }) => {
+    const { pending } = db.prepare(
+      'SELECT COUNT(*) AS pending FROM webhooks WHERE endpoint_name = ?'
+    ).get(name);
+    const { deliveries } = db.prepare(
+      `SELECT COUNT(*) AS deliveries FROM webhook_deliveries
+       WHERE webhook_id IN (SELECT id FROM webhooks WHERE endpoint_name = ?)`
+    ).get(name);
+    return { name, pending, deliveries };
+  });
+
+  const totalPending = rows.reduce((s, r) => s + r.pending, 0);
+
+  res.json({ total_pending: totalPending, endpoints: rows });
 });
 
 // ── Poll: return undelivered webhooks ─────────────────────────────────────────
@@ -144,13 +178,38 @@ app.post('/api/poll', (req, res) => {
     return res.status(401).json({ error: 'Invalid secret key' });
   }
 
-  const webhooks = db.prepare(`
-    SELECT id, method, payload, headers, received_at
-    FROM   webhooks
-    WHERE  endpoint_name = ?
-    ORDER  BY received_at ASC
-    LIMIT  ?
-  `).all(endpoint.name, POLL_BATCH_SIZE);
+  let webhooks;
+  if (MULTI_CLIENT_ENABLED) {
+    const clientId = req.headers['x-podkop-client-id'] || null;
+    if (clientId) {
+      webhooks = db.prepare(`
+        SELECT id, method, payload, headers, received_at
+        FROM   webhooks
+        WHERE  endpoint_name = ?
+          AND  id NOT IN (
+            SELECT webhook_id FROM webhook_deliveries WHERE client_id = ?
+          )
+        ORDER  BY received_at ASC
+        LIMIT  ?
+      `).all(endpoint.name, clientId, POLL_BATCH_SIZE);
+    } else {
+      webhooks = db.prepare(`
+        SELECT id, method, payload, headers, received_at
+        FROM   webhooks
+        WHERE  endpoint_name = ?
+        ORDER  BY received_at ASC
+        LIMIT  ?
+      `).all(endpoint.name, POLL_BATCH_SIZE);
+    }
+  } else {
+    webhooks = db.prepare(`
+      SELECT id, method, payload, headers, received_at
+      FROM   webhooks
+      WHERE  endpoint_name = ?
+      ORDER  BY received_at ASC
+      LIMIT  ?
+    `).all(endpoint.name, POLL_BATCH_SIZE);
+  }
 
   res.json({ webhooks });
 });
@@ -172,13 +231,47 @@ app.post('/api/ack', (req, res) => {
     return res.status(401).json({ error: 'Invalid secret key' });
   }
 
-  const placeholders = ids.map(() => '?').join(', ');
-  const result = db.prepare(
-    `DELETE FROM webhooks WHERE id IN (${placeholders}) AND endpoint_name = ?`
-  ).run(...ids, endpoint.name);
+  let deleted = 0;
 
-  console.log(`[ack] Deleted ${result.changes} webhook(s) for "/${endpoint.name}"`);
-  res.json({ ok: true, deleted: result.changes });
+  if (MULTI_CLIENT_ENABLED) {
+    const clientId = req.headers['x-podkop-client-id'] || null;
+    if (!clientId) {
+      return res.status(400).json({ error: 'X-Podkop-Client-Id header is required in multi-client mode' });
+    }
+
+    const insertDelivery = db.prepare(
+      'INSERT OR IGNORE INTO webhook_deliveries (webhook_id, client_id) VALUES (?, ?)'
+    );
+    const countDeliveries = db.prepare(
+      'SELECT COUNT(*) AS cnt FROM webhook_deliveries WHERE webhook_id = ?'
+    );
+    const deleteDeliveries = db.prepare('DELETE FROM webhook_deliveries WHERE webhook_id = ?');
+    const deleteWebhook = db.prepare('DELETE FROM webhooks WHERE id = ? AND endpoint_name = ?');
+
+    const doAck = db.transaction(() => {
+      for (const id of ids) {
+        insertDelivery.run(id, clientId);
+        const { cnt } = countDeliveries.get(id);
+        if (cnt >= MAX_DELIVERIES) {
+          deleteDeliveries.run(id);
+          const r = deleteWebhook.run(id, endpoint.name);
+          deleted += r.changes;
+        }
+      }
+    });
+    doAck();
+
+    console.log(`[ack] multi-client: recorded ${ids.length} delivery(s) for "/${endpoint.name}", deleted ${deleted}`);
+  } else {
+    const placeholders = ids.map(() => '?').join(', ');
+    const result = db.prepare(
+      `DELETE FROM webhooks WHERE id IN (${placeholders}) AND endpoint_name = ?`
+    ).run(...ids, endpoint.name);
+    deleted = result.changes;
+    console.log(`[ack] Deleted ${deleted} webhook(s) for "/${endpoint.name}"`);
+  }
+
+  res.json({ ok: true, deleted });
 });
 
 // ── Webhook receiver — catch-all /{name} ──────────────────────────────────────
@@ -211,10 +304,20 @@ app.all('/:name', (req, res) => {
 // ── Cleanup job ───────────────────────────────────────────────────────────────
 
 setInterval(() => {
+  const cutoff = `-${WEBHOOK_MAX_AGE_MINUTES} minutes`;
+
+  // Delete delivery records for expired webhooks first
+  db.prepare(`
+    DELETE FROM webhook_deliveries
+    WHERE webhook_id IN (
+      SELECT id FROM webhooks WHERE datetime(received_at) < datetime('now', ?)
+    )
+  `).run(cutoff);
+
   const result = db.prepare(`
     DELETE FROM webhooks
     WHERE datetime(received_at) < datetime('now', ?)
-  `).run(`-${WEBHOOK_MAX_AGE_MINUTES} minutes`);
+  `).run(cutoff);
 
   if (result.changes > 0) {
     console.log(`[cleanup] Removed ${result.changes} expired webhook(s)`);

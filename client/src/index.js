@@ -16,6 +16,17 @@
  */
 
 const fs = require('fs');
+const os = require('os');
+
+// ── Instance ID ───────────────────────────────────────────────────────────────
+
+let machineId;
+try {
+  machineId = fs.readFileSync('/etc/machine-id', 'utf8').trim();
+} catch {
+  machineId = 'unknown';
+}
+const INSTANCE_ID = `${machineId}-${os.hostname()}`;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +62,7 @@ for (const entry of webhookConfigs) {
 }
 
 console.log(`[client] Started — polling ${SERVER_URL}  every ${POLL_INTERVAL_MS / 1000}s`);
+console.log(`[client] Instance ID: ${INSTANCE_ID}`);
 webhookConfigs.forEach((e) =>
   console.log(`[client]   secret …${e.secret_key.slice(-8)}  →  ${e.forward_url}`)
 );
@@ -66,7 +78,7 @@ async function pollAndForward({ secret_key, forward_url }) {
   try {
     const res = await fetch(`${SERVER_URL}/api/poll`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Podkop-Client-Id': INSTANCE_ID },
       body:    JSON.stringify({ secret_key }),
     });
 
@@ -103,10 +115,11 @@ async function pollAndForward({ secret_key, forward_url }) {
       const res = await fetch(forward_url, {
         method:  'POST',
         headers: {
-          'Content-Type':      contentType,
-          'X-Original-Method': wh.method,
-          'X-Webhook-Id':      String(wh.id),
-          'X-Received-At':     wh.received_at,
+          'Content-Type':        contentType,
+          'X-Original-Method':   wh.method,
+          'X-Webhook-Id':        String(wh.id),
+          'X-Received-At':       wh.received_at,
+          'X-Podkop-Client-Id':  INSTANCE_ID,
         },
         body: wh.payload,
       });
@@ -130,7 +143,7 @@ async function pollAndForward({ secret_key, forward_url }) {
   try {
     const res = await fetch(`${SERVER_URL}/api/ack`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Podkop-Client-Id': INSTANCE_ID },
       body:    JSON.stringify({ secret_key, ids: ackedIds }),
     });
 

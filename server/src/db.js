@@ -29,6 +29,13 @@ db.exec(`
     received_at   TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (endpoint_name) REFERENCES endpoints(name)
   );
+
+  CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    webhook_id  INTEGER NOT NULL,
+    client_id   TEXT    NOT NULL,
+    delivered_at TEXT   DEFAULT (datetime('now')),
+    PRIMARY KEY (webhook_id, client_id)
+  );
 `);
 
 // Migration: add password column if it doesn't exist yet

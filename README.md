@@ -66,6 +66,9 @@ docker-compose exec server node src/cli.js create-webhook <name> <username> <pas
 # List all endpoints with their secret keys
 docker-compose exec server node src/cli.js list-webhooks
 
+# Show pending and delivered webhook counts per endpoint
+docker-compose exec server node src/cli.js stats
+
 # Delete an endpoint (also deletes all its buffered webhooks)
 docker-compose exec server node src/cli.js delete-webhook <name>
 ```
@@ -144,6 +147,8 @@ Webhooks are deleted only after a successful ACK. If the client fails to forward
 | `CLIENT_SERVER_URL` | `http://server:{SERVER_PORT}` | Server URL as seen from the client container |
 | `CLIENT_WEBHOOKS_CONFIG` | `/app/webhooks.json` | Path to the client config file inside container |
 | `CLIENT_POLL_INTERVAL_SECONDS` | `10` | How often the client polls (applies to all entries) |
+| `MULTI_CLIENT_ENABLED` | `false` | Allow multiple clients to receive the same webhook |
+| `MAX_DELIVERIES_PER_WEBHOOK` | `1` | How many clients must ACK a webhook before it is deleted (only when `MULTI_CLIENT_ENABLED=true`) |
 
 ## Replacing the Target
 

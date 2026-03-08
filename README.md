@@ -6,7 +6,7 @@ Can be useful for local development if you don't have possibility to proxy webho
 
 The main idea is to put the server application anywhere available over internet and then poll requests by the client application run locally.
 
-Three services: one receives webhooks and buffers them, second forward them to your application, and third is for the test. You can imagine, that the server caches the wehooks and play a queue role for the clients.
+Three services: one receives webhooks and buffers them, second forwards them to your application, and third is for the test. You can imagine that the server caches the webhooks and plays a queue role for the clients.
 
 ```
 External Service
@@ -63,6 +63,12 @@ docker-compose exec server node src/cli.js create-webhook <name>
 # Create — protected endpoint (requires Basic Auth on incoming webhooks)
 docker-compose exec server node src/cli.js create-webhook <name> <username> <password>
 
+# Update credentials on an existing endpoint
+docker-compose exec server node src/cli.js set-credentials <name> <username> <password>
+
+# Remove Basic Auth from an endpoint (make it open)
+docker-compose exec server node src/cli.js disable-auth <name>
+
 # List all endpoints with their secret keys
 docker-compose exec server node src/cli.js list-webhooks
 
@@ -94,6 +100,8 @@ Each entry in the array defines one webhook to poll and where to forward it:
 ]
 ```
 
+> **Note:** `client/webhooks.json` contains secret keys — keep it out of version control and never bake it into a Docker image. The client Dockerfile copies only `src/` and `package.json`; the file is mounted at runtime via `docker-compose.yml`.
+
 After editing the file, apply changes:
 
 ```bash
@@ -116,6 +124,7 @@ curl -u alice:secret123 -X POST http://localhost:3033/secured \
 
 Requests to unknown endpoint names return `404`.
 Requests to protected endpoints without valid credentials return `401`.
+Requests that exceed the rate limit return `429`.
 
 ## Polling API (used by client internally)
 
@@ -133,6 +142,8 @@ POST /api/ack
 
 Webhooks are deleted only after a successful ACK. If the client fails to forward a webhook, it stays on the server and is retried on the next poll cycle.
 
+The number of IDs per ACK request is capped by `ACK_MAX_IDS` (default: 10).
+
 ## Key Configuration (.env)
 
 | Variable | Default | Description |
@@ -141,6 +152,9 @@ Webhooks are deleted only after a successful ACK. If the client fails to forward
 | `DB_PATH` | `/data/webhooks.db` | SQLite file path inside container |
 | `ADMIN_SECRET` | — | Protects admin endpoints — **change this** |
 | `POLL_BATCH_SIZE` | `10` | Webhooks returned per poll request |
+| `ACK_MAX_IDS` | `10` | Maximum IDs allowed in a single ACK request |
+| `WEBHOOK_BODY_LIMIT` | `2mb` | Maximum request body size accepted by the webhook receiver |
+| `WEBHOOK_RATE_LIMIT_RPM` | `60` | Max incoming requests per minute per endpoint name (0 = disabled) |
 | `CLEANUP_INTERVAL_MINUTES` | `5` | How often the cleanup job runs |
 | `WEBHOOK_MAX_AGE_MINUTES` | `60` | Delete undelivered webhooks older than this |
 | `CLI_SERVER_URL` | `http://localhost:{SERVER_PORT}` | Server URL used by the CLI (inside container) |

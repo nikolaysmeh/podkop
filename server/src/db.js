@@ -15,7 +15,6 @@ db.exec(`
     name          TEXT UNIQUE NOT NULL,
     secret_key    TEXT UNIQUE NOT NULL,
     username      TEXT,
-    password      TEXT,
     password_hash TEXT,
     created_at    TEXT DEFAULT (datetime('now'))
   );
@@ -38,9 +37,16 @@ db.exec(`
   );
 `);
 
-// Migration: add password column if it doesn't exist yet
+// Migration: drop plaintext password column (security fix)
 try {
-  db.exec('ALTER TABLE endpoints ADD COLUMN password TEXT');
+  db.exec('ALTER TABLE endpoints DROP COLUMN password');
+} catch {
+  // column already dropped or never existed — ignore
+}
+
+// Migration: add password_hash column if missing (older installs)
+try {
+  db.exec('ALTER TABLE endpoints ADD COLUMN password_hash TEXT');
 } catch {
   // column already exists — ignore
 }

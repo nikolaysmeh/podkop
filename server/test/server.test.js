@@ -6,6 +6,7 @@ process.env.ADMIN_SECRET              = 'test-secret';
 process.env.MULTI_CLIENT_ENABLED      = 'false';
 process.env.MAX_DELIVERIES_PER_WEBHOOK = '1';
 process.env.POLL_BATCH_SIZE           = '5';
+process.env.ACK_MAX_IDS               = '10';
 
 const { test, describe, beforeEach } = require('node:test');
 const assert  = require('node:assert/strict');
@@ -21,6 +22,7 @@ beforeEach(() => {
   db.prepare('DELETE FROM webhook_deliveries').run();
   db.prepare('DELETE FROM webhooks').run();
   db.prepare('DELETE FROM endpoints').run();
+  app.rateLimitMap.clear();
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -77,6 +79,13 @@ describe('POST /api/admin/create-webhook', () => {
     const res = await createEndpoint('secured', { username: 'alice', password: 'pass123' });
     assert.equal(res.status, 201);
     assert.equal(res.body.auth, 'basic');
+  });
+
+  test('response does not contain plaintext password', async () => {
+    const res = await createEndpoint('secured', { username: 'alice', password: 'pass123' });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.password, undefined);
+    assert.equal(JSON.stringify(res.body).includes('pass123'), false);
   });
 
   test('400 — missing name', async () => {
@@ -157,15 +166,89 @@ describe('GET /api/admin/webhooks', () => {
     assert.ok(res.body.endpoints[0].secret_key);
   });
 
-  test('includes plain-text username and password for protected endpoint', async () => {
+  test('does not return plaintext password for protected endpoint', async () => {
     await createEndpoint('prot', { username: 'alice', password: 'pass123' });
     const res = await request(app).get('/api/admin/webhooks').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
     assert.equal(res.body.endpoints[0].username, 'alice');
-    assert.equal(res.body.endpoints[0].password, 'pass123');
+    assert.equal(res.body.endpoints[0].password, undefined);
+    assert.equal(JSON.stringify(res.body).includes('pass123'), false);
   });
 
   test('403 — wrong admin secret', async () => {
     const res = await request(app).get('/api/admin/webhooks').set('x-admin-secret', 'wrong');
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('PATCH /api/admin/webhooks/:name/credentials', () => {
+  test('updates credentials on a protected endpoint', async () => {
+    await createEndpoint('ep', { username: 'alice', password: 'old' });
+
+    const res = await request(app)
+      .patch('/api/admin/webhooks/ep/credentials')
+      .set('x-admin-secret', ADMIN)
+      .send({ username: 'bob', password: 'newpass' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.auth, 'basic');
+
+    // New credentials work
+    const ok = await receiveWebhook('ep', { x: 1 }, { auth: { user: 'bob', pass: 'newpass' } });
+    assert.equal(ok.status, 200);
+
+    // Old credentials rejected
+    const fail = await receiveWebhook('ep', { x: 1 }, { auth: { user: 'alice', pass: 'old' } });
+    assert.equal(fail.status, 401);
+  });
+
+  test('disables auth when called with empty body', async () => {
+    await createEndpoint('ep', { username: 'alice', password: 'secret' });
+
+    const res = await request(app)
+      .patch('/api/admin/webhooks/ep/credentials')
+      .set('x-admin-secret', ADMIN)
+      .send({});
+    assert.equal(res.status, 200);
+    assert.equal(res.body.auth, 'none');
+
+    // Now reachable without credentials
+    const open = await receiveWebhook('ep');
+    assert.equal(open.status, 200);
+  });
+
+  test('response does not contain plaintext password', async () => {
+    await createEndpoint('ep');
+    const res = await request(app)
+      .patch('/api/admin/webhooks/ep/credentials')
+      .set('x-admin-secret', ADMIN)
+      .send({ username: 'u', password: 'supersecret' });
+    assert.equal(res.status, 200);
+    assert.equal(JSON.stringify(res.body).includes('supersecret'), false);
+  });
+
+  test('400 — username without password', async () => {
+    await createEndpoint('ep');
+    const res = await request(app)
+      .patch('/api/admin/webhooks/ep/credentials')
+      .set('x-admin-secret', ADMIN)
+      .send({ username: 'alice' });
+    assert.equal(res.status, 400);
+  });
+
+  test('404 — non-existent endpoint', async () => {
+    const res = await request(app)
+      .patch('/api/admin/webhooks/ghost/credentials')
+      .set('x-admin-secret', ADMIN)
+      .send({ username: 'u', password: 'p' });
+    assert.equal(res.status, 404);
+  });
+
+  test('403 — wrong admin secret', async () => {
+    await createEndpoint('ep');
+    const res = await request(app)
+      .patch('/api/admin/webhooks/ep/credentials')
+      .set('x-admin-secret', 'wrong')
+      .send({ username: 'u', password: 'p' });
     assert.equal(res.status, 403);
   });
 });
@@ -304,6 +387,33 @@ describe('POST /:name (webhook receiver)', () => {
     const res = await receiveWebhook('prot', { test: true }, { auth: { user: 'bob', pass: 'pass123' } });
     assert.equal(res.status, 401);
   });
+
+  test('429 — rate limit exceeded', async () => {
+    await createEndpoint('rl');
+    const origLimit = app.config.rateLimitRpm;
+    app.config.rateLimitRpm = 2;
+    try {
+      assert.equal((await receiveWebhook('rl')).status, 200);
+      assert.equal((await receiveWebhook('rl')).status, 200);
+      assert.equal((await receiveWebhook('rl')).status, 429);
+    } finally {
+      app.config.rateLimitRpm = origLimit;
+    }
+  });
+
+  test('rate limit is per endpoint name (independent counters)', async () => {
+    await createEndpoint('ep-a');
+    await createEndpoint('ep-b');
+    const origLimit = app.config.rateLimitRpm;
+    app.config.rateLimitRpm = 1;
+    try {
+      assert.equal((await receiveWebhook('ep-a')).status, 200);
+      assert.equal((await receiveWebhook('ep-a')).status, 429); // ep-a exhausted
+      assert.equal((await receiveWebhook('ep-b')).status, 200); // ep-b unaffected
+    } finally {
+      app.config.rateLimitRpm = origLimit;
+    }
+  });
 });
 
 describe('POST /api/poll', () => {
@@ -377,6 +487,26 @@ describe('POST /api/ack', () => {
     const { body: { secretKey } } = await createEndpoint('ep');
     const res = await request(app).post('/api/ack').send({ secret_key: secretKey, ids: 'bad' });
     assert.equal(res.status, 400);
+  });
+
+  test('400 — ids exceeds ACK_MAX_IDS limit', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    const tooMany = Array.from({ length: 11 }, (_, i) => i + 1);
+    const res = await ack(secretKey, tooMany);
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error.includes('10'));
+  });
+
+  test('accepts ids up to ACK_MAX_IDS limit', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    // Insert 10 webhooks directly to avoid rate limiting
+    for (let i = 0; i < 10; i++) {
+      db.prepare('INSERT INTO webhooks (endpoint_name, method, payload) VALUES (?, ?, ?)').run('ep', 'POST', '{}');
+    }
+    const { body: { webhooks } } = await poll(secretKey); // returns up to POLL_BATCH_SIZE=5
+    const ids = webhooks.map(w => w.id);
+    const res = await ack(secretKey, ids);
+    assert.equal(res.status, 200);
   });
 
   test('401 — invalid secret_key', async () => {

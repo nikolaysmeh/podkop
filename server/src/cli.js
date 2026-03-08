@@ -7,12 +7,16 @@
  * Usage (inside the container):
  *   node src/cli.js create-webhook <name>
  *   node src/cli.js create-webhook <name> <username> <password>
+ *   node src/cli.js set-credentials <name> <username> <password>
+ *   node src/cli.js disable-auth <name>
  *   node src/cli.js list-webhooks
  *   node src/cli.js stats
  *   node src/cli.js delete-webhook <name>
  *
  * Via docker-compose:
  *   docker-compose exec server node src/cli.js create-webhook mywebhook
+ *   docker-compose exec server node src/cli.js set-credentials mywebhook alice newpass
+ *   docker-compose exec server node src/cli.js disable-auth mywebhook
  *   docker-compose exec server node src/cli.js list-webhooks
  *   docker-compose exec server node src/cli.js stats
  *   docker-compose exec server node src/cli.js delete-webhook mywebhook
@@ -64,6 +68,7 @@ function request(method, url, body, headers = {}) {
 }
 
 const postJSON   = (url, body, headers) => request('POST',   url, body, headers);
+const patchJSON  = (url, body, headers) => request('PATCH',  url, body, headers);
 const getJSON    = (url, headers)       => request('GET',    url, undefined, headers);
 const deleteJSON = (url, headers)       => request('DELETE', url, undefined, headers);
 
@@ -106,7 +111,6 @@ async function listWebhooks() {
       if (ep.username) {
         console.log(`  Auth       : basic`);
         console.log(`  Username   : ${ep.username}`);
-        console.log(`  Password   : ${ep.password}`);
       } else {
         console.log(`  Auth       : none`);
       }
@@ -137,6 +141,36 @@ async function stats() {
     }
     console.log('');
     console.log(`Total pending: ${total_pending}`);
+  } else {
+    console.error(`Error ${result.status}: ${JSON.stringify(result.body)}`);
+    process.exit(1);
+  }
+}
+
+async function setCredentials(name, username, password) {
+  const result = await patchJSON(
+    `${SERVER_URL}/api/admin/webhooks/${encodeURIComponent(name)}/credentials`,
+    { username, password },
+    { 'X-Admin-Secret': ADMIN_SECRET }
+  );
+
+  if (result.status === 200) {
+    console.log(`Credentials updated for "${name}". Auth: ${result.body.auth}`);
+  } else {
+    console.error(`Error ${result.status}: ${JSON.stringify(result.body)}`);
+    process.exit(1);
+  }
+}
+
+async function disableAuth(name) {
+  const result = await patchJSON(
+    `${SERVER_URL}/api/admin/webhooks/${encodeURIComponent(name)}/credentials`,
+    {},
+    { 'X-Admin-Secret': ADMIN_SECRET }
+  );
+
+  if (result.status === 200) {
+    console.log(`Auth disabled for "${name}".`);
   } else {
     console.error(`Error ${result.status}: ${JSON.stringify(result.body)}`);
     process.exit(1);
@@ -181,6 +215,36 @@ async function main() {
     return;
   }
 
+  if (command === 'set-credentials') {
+    const [name, username, password] = args;
+    if (!name || !username || !password) {
+      console.error('Usage: node src/cli.js set-credentials <name> <username> <password>');
+      process.exit(1);
+    }
+    try {
+      await setCredentials(name, username, password);
+    } catch (err) {
+      console.error(`Cannot reach server at ${SERVER_URL}: ${err.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === 'disable-auth') {
+    const [name] = args;
+    if (!name) {
+      console.error('Usage: node src/cli.js disable-auth <name>');
+      process.exit(1);
+    }
+    try {
+      await disableAuth(name);
+    } catch (err) {
+      console.error(`Cannot reach server at ${SERVER_URL}: ${err.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   if (command === 'list-webhooks') {
     try {
       await listWebhooks();
@@ -218,6 +282,8 @@ async function main() {
 
   console.log('Commands:');
   console.log('  node src/cli.js create-webhook <name> [<username> <password>]');
+  console.log('  node src/cli.js set-credentials <name> <username> <password>');
+  console.log('  node src/cli.js disable-auth <name>');
   console.log('  node src/cli.js list-webhooks');
   console.log('  node src/cli.js stats');
   console.log('  node src/cli.js delete-webhook <name>');

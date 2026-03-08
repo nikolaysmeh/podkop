@@ -10,10 +10,12 @@ COPY package.json .
 FROM base AS test
 RUN npm install
 COPY . .
+USER node
 CMD ["npm", "test"]
 
 # ── Production stage ─────────────────────────────────────────────────────────
 FROM base AS production
 RUN npm install --omit=dev
 COPY . .
+USER node
 CMD ["node", "src/index.js"]

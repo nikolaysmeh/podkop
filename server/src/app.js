@@ -5,18 +5,49 @@ const express = require('express');
 const bcrypt  = require('bcryptjs');
 const db      = require('./db');
 
-const app = express();
-
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.text({ type: 'text/*', limit: '10mb' }));
-
 const ADMIN_SECRET         = process.env.ADMIN_SECRET                       || '';
 const POLL_BATCH_SIZE      = parseInt(process.env.POLL_BATCH_SIZE)           || 10;
 const MULTI_CLIENT_ENABLED = process.env.MULTI_CLIENT_ENABLED === 'true';
 const MAX_DELIVERIES       = parseInt(process.env.MAX_DELIVERIES_PER_WEBHOOK) || 1;
+const ACK_MAX_IDS          = parseInt(process.env.ACK_MAX_IDS)               || 10;
+const WEBHOOK_BODY_LIMIT   = process.env.WEBHOOK_BODY_LIMIT                  || '2mb';
+
+// Rate-limit config — mutable so tests can override at runtime
+const config = {
+  rateLimitRpm: parseInt(process.env.WEBHOOK_RATE_LIMIT_RPM) || 60,
+};
 
 const RESERVED = new Set(['api', 'health', 'admin']);
+
+// ── In-memory rate limiter (sliding 60-second window, per endpoint name) ─────
+
+const rateLimitMap = new Map(); // name → { count, windowStart }
+
+function checkRateLimit(name) {
+  if (config.rateLimitRpm <= 0) return true; // 0 = disabled
+
+  const now      = Date.now();
+  const windowMs = 60 * 1000;
+  const entry    = rateLimitMap.get(name) || { count: 0, windowStart: now };
+
+  if (now - entry.windowStart > windowMs) {
+    entry.count      = 1;
+    entry.windowStart = now;
+  } else {
+    entry.count++;
+  }
+
+  rateLimitMap.set(name, entry);
+  return entry.count <= config.rateLimitRpm;
+}
+
+// ── Express setup ─────────────────────────────────────────────────────────────
+
+const app = express();
+
+app.use(express.json({ limit: WEBHOOK_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: WEBHOOK_BODY_LIMIT }));
+app.use(express.text({ type: 'text/*', limit: WEBHOOK_BODY_LIMIT }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -45,6 +76,14 @@ function parseBasicAuth(req) {
   }
 }
 
+function requireAdmin(req, res) {
+  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+    res.status(403).json({ error: 'Forbidden' });
+    return false;
+  }
+  return true;
+}
+
 // ── Health ────────────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -52,9 +91,7 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 // ── Admin: create webhook endpoint ───────────────────────────────────────────
 
 app.post('/api/admin/create-webhook', (req, res) => {
-  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
+  if (!requireAdmin(req, res)) return;
 
   const { name, username, password } = req.body || {};
 
@@ -80,8 +117,8 @@ app.post('/api/admin/create-webhook', (req, res) => {
   const password_hash = password ? bcrypt.hashSync(password, 10) : null;
 
   db.prepare(
-    'INSERT INTO endpoints (name, secret_key, username, password, password_hash) VALUES (?, ?, ?, ?, ?)'
-  ).run(name, secret_key, username || null, password || null, password_hash);
+    'INSERT INTO endpoints (name, secret_key, username, password_hash) VALUES (?, ?, ?, ?)'
+  ).run(name, secret_key, username || null, password_hash);
 
   console.log(`[admin] Webhook created: /${name} (auth: ${username ? 'basic' : 'none'})`);
 
@@ -96,23 +133,51 @@ app.post('/api/admin/create-webhook', (req, res) => {
 // ── Admin: list webhook endpoints ────────────────────────────────────────────
 
 app.get('/api/admin/webhooks', (req, res) => {
-  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
+  if (!requireAdmin(req, res)) return;
 
   const endpoints = db.prepare(
-    'SELECT name, secret_key, username, password, created_at FROM endpoints ORDER BY created_at ASC'
+    'SELECT name, secret_key, username, created_at FROM endpoints ORDER BY created_at ASC'
   ).all();
 
   res.json({ endpoints });
 });
 
+// ── Admin: update or disable credentials ─────────────────────────────────────
+
+app.patch('/api/admin/webhooks/:name/credentials', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { name } = req.params;
+  const endpoint = db.prepare('SELECT id FROM endpoints WHERE name = ?').get(name);
+  if (!endpoint) {
+    return res.status(404).json({ error: `Endpoint "${name}" not found` });
+  }
+
+  const { username, password } = req.body || {};
+
+  // No body / empty body → disable auth
+  if (!username && !password) {
+    db.prepare('UPDATE endpoints SET username = NULL, password_hash = NULL WHERE name = ?').run(name);
+    console.log(`[admin] Credentials disabled for /${name}`);
+    return res.json({ ok: true, auth: 'none' });
+  }
+
+  if ((username && !password) || (!username && password)) {
+    return res.status(400).json({ error: 'Provide both username and password, or neither' });
+  }
+
+  const password_hash = bcrypt.hashSync(password, 10);
+  db.prepare('UPDATE endpoints SET username = ?, password_hash = ? WHERE name = ?')
+    .run(username, password_hash, name);
+
+  console.log(`[admin] Credentials updated for /${name}`);
+  return res.json({ ok: true, auth: 'basic' });
+});
+
 // ── Admin: delete webhook endpoint ───────────────────────────────────────────
 
 app.delete('/api/admin/webhooks/:name', (req, res) => {
-  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
+  if (!requireAdmin(req, res)) return;
 
   const { name } = req.params;
   const endpoint = db.prepare('SELECT id FROM endpoints WHERE name = ?').get(name);
@@ -135,9 +200,7 @@ app.delete('/api/admin/webhooks/:name', (req, res) => {
 // ── Admin: stats ─────────────────────────────────────────────────────────────
 
 app.get('/api/admin/stats', (req, res) => {
-  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
+  if (!requireAdmin(req, res)) return;
 
   const endpoints = db.prepare(
     'SELECT name FROM endpoints ORDER BY created_at ASC'
@@ -220,6 +283,9 @@ app.post('/api/ack', (req, res) => {
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids must be a non-empty array' });
   }
+  if (ids.length > ACK_MAX_IDS) {
+    return res.status(400).json({ error: `ids must contain at most ${ACK_MAX_IDS} entries` });
+  }
 
   const endpoint = findBySecret(secret_key);
   if (!endpoint) {
@@ -234,10 +300,10 @@ app.post('/api/ack', (req, res) => {
       return res.status(400).json({ error: 'X-Podkop-Client-Id header is required in multi-client mode' });
     }
 
-    const insertDelivery  = db.prepare('INSERT OR IGNORE INTO webhook_deliveries (webhook_id, client_id) VALUES (?, ?)');
-    const countDeliveries = db.prepare('SELECT COUNT(*) AS cnt FROM webhook_deliveries WHERE webhook_id = ?');
+    const insertDelivery   = db.prepare('INSERT OR IGNORE INTO webhook_deliveries (webhook_id, client_id) VALUES (?, ?)');
+    const countDeliveries  = db.prepare('SELECT COUNT(*) AS cnt FROM webhook_deliveries WHERE webhook_id = ?');
     const deleteDeliveries = db.prepare('DELETE FROM webhook_deliveries WHERE webhook_id = ?');
-    const deleteWebhook   = db.prepare('DELETE FROM webhooks WHERE id = ? AND endpoint_name = ?');
+    const deleteWebhook    = db.prepare('DELETE FROM webhooks WHERE id = ? AND endpoint_name = ?');
 
     const doAck = db.transaction(() => {
       for (const id of ids) {
@@ -284,6 +350,11 @@ app.all('/:name', (req, res) => {
     }
   }
 
+  // Rate limiting
+  if (!checkRateLimit(name)) {
+    return res.status(429).json({ error: 'Too Many Requests' });
+  }
+
   db.prepare(
     'INSERT INTO webhooks (endpoint_name, method, payload, headers) VALUES (?, ?, ?, ?)'
   ).run(name, req.method, serializeBody(req.body), JSON.stringify(req.headers));
@@ -293,3 +364,5 @@ app.all('/:name', (req, res) => {
 });
 
 module.exports = app;
+module.exports.config       = config;
+module.exports.rateLimitMap = rateLimitMap;

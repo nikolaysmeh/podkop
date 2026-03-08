@@ -1,0 +1,452 @@
+'use strict';
+
+// Set env vars before any module is required
+process.env.DB_PATH                   = ':memory:';
+process.env.ADMIN_SECRET              = 'test-secret';
+process.env.MULTI_CLIENT_ENABLED      = 'false';
+process.env.MAX_DELIVERIES_PER_WEBHOOK = '1';
+process.env.POLL_BATCH_SIZE           = '5';
+
+const { test, describe, beforeEach } = require('node:test');
+const assert  = require('node:assert/strict');
+const request = require('supertest');
+const db      = require('../src/db');
+const app     = require('../src/app');
+
+const ADMIN = 'test-secret';
+
+// ── DB reset between tests ────────────────────────────────────────────────────
+
+beforeEach(() => {
+  db.prepare('DELETE FROM webhook_deliveries').run();
+  db.prepare('DELETE FROM webhooks').run();
+  db.prepare('DELETE FROM endpoints').run();
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function createEndpoint(name, extra = {}) {
+  return request(app)
+    .post('/api/admin/create-webhook')
+    .set('x-admin-secret', ADMIN)
+    .send({ name, ...extra });
+}
+
+function receiveWebhook(name, payload = { test: true }, opts = {}) {
+  let req = request(app).post(`/${name}`).send(payload);
+  if (opts.auth) req = req.auth(opts.auth.user, opts.auth.pass);
+  return req;
+}
+
+function poll(secretKey, extraHeaders = {}) {
+  return request(app)
+    .post('/api/poll')
+    .set(extraHeaders)
+    .send({ secret_key: secretKey });
+}
+
+function ack(secretKey, ids, extraHeaders = {}) {
+  return request(app)
+    .post('/api/ack')
+    .set(extraHeaders)
+    .send({ secret_key: secretKey, ids });
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe('GET /health', () => {
+  test('returns { ok: true }', async () => {
+    const res = await request(app).get('/health');
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, { ok: true });
+  });
+});
+
+describe('POST /api/admin/create-webhook', () => {
+  test('creates an open endpoint', async () => {
+    const res = await createEndpoint('mywebhook');
+    assert.equal(res.status, 201);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.webhookUrl, '/mywebhook');
+    assert.equal(typeof res.body.secretKey, 'string');
+    assert.ok(res.body.secretKey.length > 0);
+    assert.equal(res.body.auth, 'none');
+  });
+
+  test('creates a basic-auth protected endpoint', async () => {
+    const res = await createEndpoint('secured', { username: 'alice', password: 'pass123' });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.auth, 'basic');
+  });
+
+  test('400 — missing name', async () => {
+    const res = await request(app)
+      .post('/api/admin/create-webhook')
+      .set('x-admin-secret', ADMIN)
+      .send({});
+    assert.equal(res.status, 400);
+  });
+
+  test('400 — reserved name "api"', async () => {
+    const res = await createEndpoint('api');
+    assert.equal(res.status, 400);
+  });
+
+  test('400 — reserved name "health"', async () => {
+    const res = await createEndpoint('health');
+    assert.equal(res.status, 400);
+  });
+
+  test('400 — reserved name "admin"', async () => {
+    const res = await createEndpoint('admin');
+    assert.equal(res.status, 400);
+  });
+
+  test('400 — invalid chars in name', async () => {
+    const res = await createEndpoint('my webhook!');
+    assert.equal(res.status, 400);
+  });
+
+  test('409 — duplicate name', async () => {
+    await createEndpoint('dup');
+    const res = await createEndpoint('dup');
+    assert.equal(res.status, 409);
+  });
+
+  test('400 — username without password', async () => {
+    const res = await createEndpoint('partial', { username: 'alice' });
+    assert.equal(res.status, 400);
+  });
+
+  test('400 — password without username', async () => {
+    const res = await createEndpoint('partial', { password: 'secret' });
+    assert.equal(res.status, 400);
+  });
+
+  test('403 — wrong admin secret', async () => {
+    const res = await request(app)
+      .post('/api/admin/create-webhook')
+      .set('x-admin-secret', 'wrong')
+      .send({ name: 'test' });
+    assert.equal(res.status, 403);
+  });
+
+  test('403 — no admin secret header', async () => {
+    const res = await request(app)
+      .post('/api/admin/create-webhook')
+      .send({ name: 'test' });
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('GET /api/admin/webhooks', () => {
+  test('returns empty list', async () => {
+    const res = await request(app).get('/api/admin/webhooks').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.endpoints, []);
+  });
+
+  test('returns list of created endpoints', async () => {
+    await createEndpoint('ep1');
+    await createEndpoint('ep2');
+    const res = await request(app).get('/api/admin/webhooks').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.endpoints.length, 2);
+    assert.equal(res.body.endpoints[0].name, 'ep1');
+    assert.equal(res.body.endpoints[1].name, 'ep2');
+    assert.ok(res.body.endpoints[0].secret_key);
+  });
+
+  test('includes plain-text username and password for protected endpoint', async () => {
+    await createEndpoint('prot', { username: 'alice', password: 'pass123' });
+    const res = await request(app).get('/api/admin/webhooks').set('x-admin-secret', ADMIN);
+    assert.equal(res.body.endpoints[0].username, 'alice');
+    assert.equal(res.body.endpoints[0].password, 'pass123');
+  });
+
+  test('403 — wrong admin secret', async () => {
+    const res = await request(app).get('/api/admin/webhooks').set('x-admin-secret', 'wrong');
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('DELETE /api/admin/webhooks/:name', () => {
+  test('deletes existing endpoint', async () => {
+    await createEndpoint('todel');
+    const res = await request(app).delete('/api/admin/webhooks/todel').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+
+    const list = await request(app).get('/api/admin/webhooks').set('x-admin-secret', ADMIN);
+    assert.equal(list.body.endpoints.length, 0);
+  });
+
+  test('404 — non-existent endpoint', async () => {
+    const res = await request(app).delete('/api/admin/webhooks/ghost').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 404);
+  });
+
+  test('also deletes associated webhooks', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    await receiveWebhook('ep');
+    await receiveWebhook('ep');
+
+    const { body: { webhooks } } = await poll(secretKey);
+    assert.equal(webhooks.length, 2);
+
+    await request(app).delete('/api/admin/webhooks/ep').set('x-admin-secret', ADMIN);
+
+    const row = db.prepare('SELECT COUNT(*) AS cnt FROM webhooks WHERE endpoint_name = ?').get('ep');
+    assert.equal(row.cnt, 0);
+  });
+
+  test('403 — wrong admin secret', async () => {
+    await createEndpoint('ep');
+    const res = await request(app).delete('/api/admin/webhooks/ep').set('x-admin-secret', 'wrong');
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('GET /api/admin/stats', () => {
+  test('returns empty stats when no endpoints', async () => {
+    const res = await request(app).get('/api/admin/stats').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.total_pending, 0);
+    assert.deepEqual(res.body.endpoints, []);
+  });
+
+  test('returns pending counts per endpoint', async () => {
+    await createEndpoint('ep1');
+    await createEndpoint('ep2');
+    await receiveWebhook('ep1');
+    await receiveWebhook('ep1');
+    await receiveWebhook('ep2');
+
+    const res = await request(app).get('/api/admin/stats').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.total_pending, 3);
+
+    const ep1 = res.body.endpoints.find(e => e.name === 'ep1');
+    const ep2 = res.body.endpoints.find(e => e.name === 'ep2');
+    assert.equal(ep1.pending, 2);
+    assert.equal(ep2.pending, 1);
+  });
+
+  test('403 — wrong admin secret', async () => {
+    const res = await request(app).get('/api/admin/stats').set('x-admin-secret', 'wrong');
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('POST /:name (webhook receiver)', () => {
+  test('stores webhook and returns { ok: true }', async () => {
+    await createEndpoint('ep');
+    const res = await receiveWebhook('ep', { event: 'order.paid', id: 1 });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+
+    const row = db.prepare('SELECT * FROM webhooks WHERE endpoint_name = ?').get('ep');
+    assert.ok(row);
+    assert.equal(row.method, 'POST');
+    assert.equal(row.payload, JSON.stringify({ event: 'order.paid', id: 1 }));
+  });
+
+  test('404 — unknown endpoint', async () => {
+    const res = await request(app).post('/unknown').send({ test: true });
+    assert.equal(res.status, 404);
+  });
+
+  test('stores GET request with correct method', async () => {
+    await createEndpoint('ep');
+    const res = await request(app).get('/ep');
+    assert.equal(res.status, 200);
+    const row = db.prepare('SELECT * FROM webhooks WHERE endpoint_name = ?').get('ep');
+    assert.equal(row.method, 'GET');
+  });
+
+  test('stores text/plain body', async () => {
+    await createEndpoint('ep');
+    const res = await request(app).post('/ep').set('Content-Type', 'text/plain').send('hello world');
+    assert.equal(res.status, 200);
+    const row = db.prepare('SELECT * FROM webhooks WHERE endpoint_name = ?').get('ep');
+    assert.equal(row.payload, 'hello world');
+  });
+
+  test('stores original request headers', async () => {
+    await createEndpoint('ep');
+    await request(app).post('/ep').set('x-custom-header', 'my-value').send({ x: 1 });
+    const row = db.prepare('SELECT * FROM webhooks WHERE endpoint_name = ?').get('ep');
+    const headers = JSON.parse(row.headers);
+    assert.equal(headers['x-custom-header'], 'my-value');
+  });
+
+  test('401 — protected endpoint with no credentials', async () => {
+    await createEndpoint('prot', { username: 'alice', password: 'pass123' });
+    const res = await request(app).post('/prot').send({ test: true });
+    assert.equal(res.status, 401);
+    assert.equal(res.headers['www-authenticate'], 'Basic realm="webhook"');
+  });
+
+  test('200 — protected endpoint with valid credentials', async () => {
+    await createEndpoint('prot', { username: 'alice', password: 'pass123' });
+    const res = await receiveWebhook('prot', { test: true }, { auth: { user: 'alice', pass: 'pass123' } });
+    assert.equal(res.status, 200);
+  });
+
+  test('401 — protected endpoint with wrong password', async () => {
+    await createEndpoint('prot', { username: 'alice', password: 'pass123' });
+    const res = await receiveWebhook('prot', { test: true }, { auth: { user: 'alice', pass: 'wrong' } });
+    assert.equal(res.status, 401);
+  });
+
+  test('401 — protected endpoint with wrong username', async () => {
+    await createEndpoint('prot', { username: 'alice', password: 'pass123' });
+    const res = await receiveWebhook('prot', { test: true }, { auth: { user: 'bob', pass: 'pass123' } });
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('POST /api/poll', () => {
+  test('400 — missing secret_key', async () => {
+    const res = await request(app).post('/api/poll').send({});
+    assert.equal(res.status, 400);
+  });
+
+  test('401 — invalid secret_key', async () => {
+    const res = await request(app).post('/api/poll').send({ secret_key: 'invalid' });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns empty array when no webhooks pending', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    const res = await poll(secretKey);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.webhooks, []);
+  });
+
+  test('returns stored webhooks with correct fields', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    await receiveWebhook('ep', { event: 'test' });
+
+    const res = await poll(secretKey);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.webhooks.length, 1);
+    const wh = res.body.webhooks[0];
+    assert.ok(wh.id);
+    assert.equal(wh.method, 'POST');
+    assert.ok(wh.payload);
+    assert.ok(wh.headers);
+    assert.ok(wh.received_at);
+  });
+
+  test('returns webhooks in received_at order (oldest first)', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    await receiveWebhook('ep', { n: 1 });
+    await receiveWebhook('ep', { n: 2 });
+    await receiveWebhook('ep', { n: 3 });
+
+    const res = await poll(secretKey);
+    const payloads = res.body.webhooks.map(w => JSON.parse(w.payload));
+    assert.equal(payloads[0].n, 1);
+    assert.equal(payloads[1].n, 2);
+    assert.equal(payloads[2].n, 3);
+  });
+
+  test('respects POLL_BATCH_SIZE (set to 5 in test env)', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    for (let i = 0; i < 10; i++) await receiveWebhook('ep', { n: i });
+
+    const res = await poll(secretKey);
+    assert.equal(res.body.webhooks.length, 5);
+  });
+});
+
+describe('POST /api/ack', () => {
+  test('400 — missing secret_key', async () => {
+    const res = await request(app).post('/api/ack').send({ ids: [1] });
+    assert.equal(res.status, 400);
+  });
+
+  test('400 — empty ids array', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    const res = await ack(secretKey, []);
+    assert.equal(res.status, 400);
+  });
+
+  test('400 — ids is not an array', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    const res = await request(app).post('/api/ack').send({ secret_key: secretKey, ids: 'bad' });
+    assert.equal(res.status, 400);
+  });
+
+  test('401 — invalid secret_key', async () => {
+    const res = await ack('invalid-key', [1]);
+    assert.equal(res.status, 401);
+  });
+
+  test('deletes specified webhooks and returns deleted count', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    await receiveWebhook('ep', { n: 1 });
+    await receiveWebhook('ep', { n: 2 });
+
+    const { body: { webhooks } } = await poll(secretKey);
+    const ids = webhooks.map(w => w.id);
+
+    const res = await ack(secretKey, ids);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.deleted, 2);
+
+    const { body: { webhooks: remaining } } = await poll(secretKey);
+    assert.deepEqual(remaining, []);
+  });
+
+  test('ignores IDs that belong to a different endpoint', async () => {
+    const { body: { secretKey: sk1 } } = await createEndpoint('ep1');
+    const { body: { secretKey: sk2 } } = await createEndpoint('ep2');
+    await receiveWebhook('ep1', { n: 1 });
+
+    const { body: { webhooks } } = await poll(sk1);
+    const ids = webhooks.map(w => w.id);
+
+    const res = await ack(sk2, ids);
+    assert.equal(res.body.deleted, 0);
+
+    const { body: { webhooks: ep1Remaining } } = await poll(sk1);
+    assert.equal(ep1Remaining.length, 1);
+  });
+});
+
+describe('Full end-to-end flow', () => {
+  test('create → receive × 2 → poll → ack → empty', async () => {
+    const { body: { secretKey } } = await createEndpoint('flow');
+
+    await receiveWebhook('flow', { event: 'order.paid', id: 1 });
+    await receiveWebhook('flow', { event: 'order.paid', id: 2 });
+
+    const { body: { webhooks } } = await poll(secretKey);
+    assert.equal(webhooks.length, 2);
+
+    const ids = webhooks.map(w => w.id);
+    const { body: { deleted } } = await ack(secretKey, ids);
+    assert.equal(deleted, 2);
+
+    const { body: { webhooks: empty } } = await poll(secretKey);
+    assert.deepEqual(empty, []);
+  });
+
+  test('unacked webhook stays on server and is returned on next poll', async () => {
+    const { body: { secretKey } } = await createEndpoint('retry');
+
+    await receiveWebhook('retry', { n: 1 });
+
+    // Poll without acking
+    const poll1 = await poll(secretKey);
+    assert.equal(poll1.body.webhooks.length, 1);
+
+    // Poll again — still there
+    const poll2 = await poll(secretKey);
+    assert.equal(poll2.body.webhooks.length, 1);
+    assert.equal(poll2.body.webhooks[0].id, poll1.body.webhooks[0].id);
+  });
+});

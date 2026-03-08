@@ -1,7 +1,9 @@
 services:
 
   server:
-    build: ./server
+    build:
+      context: ./server
+      target: production
     ports:
       - "${SERVER_PORT}:${SERVER_PORT}"
     env_file:
@@ -17,7 +19,9 @@ services:
     restart: unless-stopped
 
   client:
-    build: ./client
+    build:
+      context: ./client
+      target: production
     env_file:
       - .env
     volumes:
@@ -32,3 +36,16 @@ services:
       - .env
     restart: unless-stopped
 
+  server-test:
+    build:
+      context: ./server
+      target: test
+    profiles:
+      - test
+
+  client-test:
+    build:
+      context: ./client
+      target: test
+    profiles:
+      - test

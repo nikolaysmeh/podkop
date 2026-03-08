@@ -2,11 +2,11 @@
 
 ![Podkop](./podkop.png)
 
-Three services that receive webhooks, buffer them, and forward them to your application.
-
 Can be useful for local development if you don't have possibility to proxy webhooks directly to your local machine.
 
 The main idea is to put the server application anywhere available over internet and then poll requests by the client application run locally.
+
+Three services: one receives webhooks and buffers them, second forward them to your application, and third is for the test. You can imagine, that the server caches the wehooks and play a queue role for the clients.
 
 ```
 External Service

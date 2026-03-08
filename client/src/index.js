@@ -17,6 +17,7 @@
 
 const fs = require('fs');
 const os = require('os');
+const { pollAndForward } = require('./poll');
 
 // ── Instance ID ───────────────────────────────────────────────────────────────
 
@@ -67,102 +68,12 @@ webhookConfigs.forEach((e) =>
   console.log(`[client]   secret …${e.secret_key.slice(-8)}  →  ${e.forward_url}`)
 );
 
-// ── Core loop (one instance per config entry) ─────────────────────────────────
-
-async function pollAndForward({ secret_key, forward_url }) {
-  const tag = `…${secret_key.slice(-8)}`;
-
-  // ── Step 1: poll ──────────────────────────────────────────────────────────
-
-  let webhooks;
-  try {
-    const res = await fetch(`${SERVER_URL}/api/poll`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Podkop-Client-Id': INSTANCE_ID },
-      body:    JSON.stringify({ secret_key }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.error(`[poll][${tag}] Server returned ${res.status}: ${text}`);
-      return;
-    }
-
-    ({ webhooks } = await res.json());
-  } catch (err) {
-    console.error(`[poll][${tag}] Request failed: ${err.message}`);
-    return;
-  }
-
-  if (!webhooks || webhooks.length === 0) return;
-
-  console.log(`[poll][${tag}] Received ${webhooks.length} webhook(s)`);
-
-  // ── Step 2: forward each webhook ─────────────────────────────────────────
-
-  const ackedIds = [];
-
-  for (const wh of webhooks) {
-    let contentType = 'application/json';
-    try {
-      const originalHeaders = JSON.parse(wh.headers || '{}');
-      if (originalHeaders['content-type']) {
-        contentType = originalHeaders['content-type'].split(';')[0].trim();
-      }
-    } catch { /* ignore */ }
-
-    try {
-      const res = await fetch(forward_url, {
-        method:  'POST',
-        headers: {
-          'Content-Type':        contentType,
-          'X-Original-Method':   wh.method,
-          'X-Webhook-Id':        String(wh.id),
-          'X-Received-At':       wh.received_at,
-          'X-Podkop-Client-Id':  INSTANCE_ID,
-        },
-        body: wh.payload,
-      });
-
-      if (res.ok) {
-        ackedIds.push(wh.id);
-        console.log(`[forward][${tag}] #${wh.id} → ${forward_url}  OK (${res.status})`);
-      } else {
-        const text = await res.text().catch(() => '');
-        console.error(`[forward][${tag}] #${wh.id} → ${forward_url}  FAILED (${res.status}): ${text}`);
-      }
-    } catch (err) {
-      console.error(`[forward][${tag}] #${wh.id} → ${forward_url}  ERROR: ${err.message}`);
-    }
-  }
-
-  // ── Step 3: ack successfully forwarded webhooks ───────────────────────────
-
-  if (ackedIds.length === 0) return;
-
-  try {
-    const res = await fetch(`${SERVER_URL}/api/ack`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Podkop-Client-Id': INSTANCE_ID },
-      body:    JSON.stringify({ secret_key, ids: ackedIds }),
-    });
-
-    if (res.ok) {
-      console.log(`[ack][${tag}] Acknowledged ${ackedIds.length} webhook(s): [${ackedIds.join(', ')}]`);
-    } else {
-      const text = await res.text().catch(() => '');
-      console.error(`[ack][${tag}] Server returned ${res.status}: ${text}`);
-    }
-  } catch (err) {
-    console.error(`[ack][${tag}] Request failed: ${err.message}`);
-  }
-}
-
 // ── Start — one independent loop per config entry ─────────────────────────────
 
 setTimeout(() => {
   for (const entry of webhookConfigs) {
-    pollAndForward(entry);
-    setInterval(() => pollAndForward(entry), POLL_INTERVAL_MS);
+    const opts = { ...entry, serverUrl: SERVER_URL, instanceId: INSTANCE_ID };
+    pollAndForward(opts);
+    setInterval(() => pollAndForward(opts), POLL_INTERVAL_MS);
   }
 }, 3000);

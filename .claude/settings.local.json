@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(docker compose --profile test run --rm server-test)",
-      "Bash(docker compose --profile test run --rm --build server-test)",
-      "Bash(docker compose --profile test run --rm --build client-test)"
-    ]
-  }
-}

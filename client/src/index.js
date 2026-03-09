@@ -35,7 +35,7 @@ const SERVER_URL        = process.env.CLIENT_SERVER_URL;
 const CONFIG_PATH       = process.env.CLIENT_WEBHOOKS_CONFIG || '/app/webhooks.json';
 const POLL_INTERVAL_MS  = (parseInt(process.env.CLIENT_POLL_INTERVAL_SECONDS) || 10) * 1000;
 
-if (process.env.CLIENT_IGNORE_TLS_ERRORS === 'true') {
+if (process.env.CLIENT_IGNORE_TLS_ERRORS?.toLowerCase() === 'true') {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   console.warn('[client] WARNING: TLS certificate verification is DISABLED (CLIENT_IGNORE_TLS_ERRORS=true)');
 }

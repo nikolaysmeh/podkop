@@ -154,6 +154,7 @@ The number of IDs per ACK request is capped by `ACK_MAX_IDS` (default: 10).
 | `SERVER_PORT` | `3000` | Server HTTP port |
 | `DB_PATH` | `/data/webhooks.db` | SQLite file path inside container |
 | `ADMIN_SECRET` | — | Protects admin endpoints — **change this** |
+| `SERVER_DEBUG` | `false` | Verbose logging: full request headers, body, returned/acked IDs |
 | `POLL_BATCH_SIZE` | `10` | Webhooks returned per poll request |
 | `ACK_MAX_IDS` | `10` | Maximum IDs allowed in a single ACK request |
 | `WEBHOOK_BODY_LIMIT` | `2mb` | Maximum request body size accepted by the webhook receiver |
@@ -165,6 +166,7 @@ The number of IDs per ACK request is capped by `ACK_MAX_IDS` (default: 10).
 | `CLIENT_WEBHOOKS_CONFIG` | `/app/webhooks.json` | Path to the client config file inside container |
 | `CLIENT_POLL_INTERVAL_SECONDS` | `10` | How often the client polls (applies to all entries) |
 | `CLIENT_IGNORE_TLS_ERRORS` | `false` | Set to `true` to skip TLS certificate validation when forwarding to HTTPS targets (e.g. self-signed certs). **Use only in development.** |
+| `CLIENT_DEBUG` | `false` | Verbose logging: full webhook payloads, forward response bodies, acked IDs |
 | `MULTI_CLIENT_ENABLED` | `false` | Allow multiple clients to receive the same webhook |
 | `MAX_DELIVERIES_PER_WEBHOOK` | `1` | How many clients must ACK a webhook before it is deleted (only when `MULTI_CLIENT_ENABLED=true`) |
 

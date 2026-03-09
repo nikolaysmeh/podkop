@@ -1,5 +1,8 @@
 'use strict';
 
+const DEBUG = process.env.CLIENT_DEBUG?.toLowerCase() === 'true';
+function debug(...args) { if (DEBUG) console.log(...args); }
+
 /**
  * Core poll-forward-ack logic, extracted for testability.
  *
@@ -16,6 +19,7 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }
 
   let webhooks;
   try {
+    debug(`[poll][${tag}][debug] → ${serverUrl}/api/poll`);
     const res = await fetch(`${serverUrl}/api/poll`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'X-Podkop-Client-Id': instanceId },
@@ -37,6 +41,7 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }
   if (!webhooks || webhooks.length === 0) return;
 
   console.log(`[poll][${tag}] Received ${webhooks.length} webhook(s)`);
+  debug(`[poll][${tag}][debug] ids=[${webhooks.map(w => w.id).join(', ')}]`);
 
   // ── Step 2: forward each webhook ─────────────────────────────────────────
 
@@ -50,6 +55,8 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }
         contentType = originalHeaders['content-type'].split(';')[0].trim();
       }
     } catch { /* ignore */ }
+
+    debug(`[forward][${tag}][debug] #${wh.id} method=${wh.method} payload=${wh.payload}`);
 
     try {
       const res = await fetch(forward_url, {
@@ -67,6 +74,10 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }
       if (res.ok) {
         ackedIds.push(wh.id);
         console.log(`[forward][${tag}] #${wh.id} → ${forward_url}  OK (${res.status})`);
+        if (DEBUG) {
+          const body = await res.text().catch(() => '');
+          if (body) debug(`[forward][${tag}][debug] #${wh.id} response: ${body}`);
+        }
       } else {
         const text = await res.text().catch(() => '');
         console.error(`[forward][${tag}] #${wh.id} → ${forward_url}  FAILED (${res.status}): ${text}`);
@@ -81,6 +92,7 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }
   if (ackedIds.length === 0) return;
 
   try {
+    debug(`[ack][${tag}][debug] → ${serverUrl}/api/ack ids=[${ackedIds.join(', ')}]`);
     const res = await fetch(`${serverUrl}/api/ack`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'X-Podkop-Client-Id': instanceId },

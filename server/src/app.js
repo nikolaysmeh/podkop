@@ -7,10 +7,13 @@ const db      = require('./db');
 
 const ADMIN_SECRET         = process.env.ADMIN_SECRET                       || '';
 const POLL_BATCH_SIZE      = parseInt(process.env.POLL_BATCH_SIZE)           || 10;
-const MULTI_CLIENT_ENABLED = process.env.MULTI_CLIENT_ENABLED === 'true';
+const MULTI_CLIENT_ENABLED = process.env.MULTI_CLIENT_ENABLED?.toLowerCase() === 'true';
 const MAX_DELIVERIES       = parseInt(process.env.MAX_DELIVERIES_PER_WEBHOOK) || 1;
 const ACK_MAX_IDS          = parseInt(process.env.ACK_MAX_IDS)               || 10;
 const WEBHOOK_BODY_LIMIT   = process.env.WEBHOOK_BODY_LIMIT                  || '2mb';
+const DEBUG                = process.env.SERVER_DEBUG?.toLowerCase()         === 'true';
+
+function debug(...args) { if (DEBUG) console.log(...args); }
 
 // Rate-limit config — mutable so tests can override at runtime
 const config = {
@@ -291,6 +294,7 @@ app.post('/api/poll', (req, res) => {
     `).all(endpoint.name, POLL_BATCH_SIZE);
   }
 
+  debug(`[poll][debug] "/${endpoint.name}" → returning ${webhooks.length} webhook(s) ids=[${webhooks.map(w => w.id).join(', ')}]`);
   res.json({ webhooks });
 });
 
@@ -340,6 +344,7 @@ app.post('/api/ack', (req, res) => {
     });
     doAck();
 
+    debug(`[ack][debug] multi-client ids=[${ids.join(', ')}] client=${clientId}`);
     console.log(`[ack] multi-client: recorded ${ids.length} delivery(s) for "/${endpoint.name}", deleted ${deleted}`);
   } else {
     const placeholders = ids.map(() => '?').join(', ');
@@ -347,6 +352,7 @@ app.post('/api/ack', (req, res) => {
       `DELETE FROM webhooks WHERE id IN (${placeholders}) AND endpoint_name = ?`
     ).run(...ids, endpoint.name);
     deleted = result.changes;
+    debug(`[ack][debug] ids=[${ids.join(', ')}]`);
     console.log(`[ack] Deleted ${deleted} webhook(s) for "/${endpoint.name}"`);
   }
 
@@ -382,6 +388,8 @@ app.all('/:name', (req, res) => {
   ).run(name, req.method, serializeBody(req.body), JSON.stringify(req.headers));
 
   console.log(`[webhook] Stored for "/${name}" [${req.method}]`);
+  debug(`[webhook][debug] Headers: ${JSON.stringify(req.headers)}`);
+  debug(`[webhook][debug] Body: ${serializeBody(req.body)}`);
   res.status(200).json({ ok: true });
 });
 

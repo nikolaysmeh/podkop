@@ -9,6 +9,7 @@
  *   node src/cli.js create-webhook <name> <username> <password>
  *   node src/cli.js set-credentials <name> <username> <password>
  *   node src/cli.js disable-auth <name>
+ *   node src/cli.js purge-webhooks <name>
  *   node src/cli.js list-webhooks
  *   node src/cli.js stats
  *   node src/cli.js delete-webhook <name>
@@ -17,6 +18,7 @@
  *   docker-compose exec server node src/cli.js create-webhook mywebhook
  *   docker-compose exec server node src/cli.js set-credentials mywebhook alice newpass
  *   docker-compose exec server node src/cli.js disable-auth mywebhook
+ *   docker-compose exec server node src/cli.js purge-webhooks mywebhook
  *   docker-compose exec server node src/cli.js list-webhooks
  *   docker-compose exec server node src/cli.js stats
  *   docker-compose exec server node src/cli.js delete-webhook mywebhook
@@ -177,6 +179,21 @@ async function disableAuth(name) {
   }
 }
 
+async function purgeWebhooks(name) {
+  const result = await postJSON(
+    `${SERVER_URL}/api/admin/webhooks/${encodeURIComponent(name)}/purge`,
+    {},
+    { 'X-Admin-Secret': ADMIN_SECRET }
+  );
+
+  if (result.status === 200) {
+    console.log(`Purged ${result.body.deleted} webhook(s) from "${name}".`);
+  } else {
+    console.error(`Error ${result.status}: ${JSON.stringify(result.body)}`);
+    process.exit(1);
+  }
+}
+
 async function deleteWebhook(name) {
   const result = await deleteJSON(
     `${SERVER_URL}/api/admin/webhooks/${encodeURIComponent(name)}`,
@@ -265,6 +282,21 @@ async function main() {
     return;
   }
 
+  if (command === 'purge-webhooks') {
+    const [name] = args;
+    if (!name) {
+      console.error('Usage: node src/cli.js purge-webhooks <name>');
+      process.exit(1);
+    }
+    try {
+      await purgeWebhooks(name);
+    } catch (err) {
+      console.error(`Cannot reach server at ${SERVER_URL}: ${err.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   if (command === 'delete-webhook') {
     const [name] = args;
     if (!name) {
@@ -284,6 +316,7 @@ async function main() {
   console.log('  node src/cli.js create-webhook <name> [<username> <password>]');
   console.log('  node src/cli.js set-credentials <name> <username> <password>');
   console.log('  node src/cli.js disable-auth <name>');
+  console.log('  node src/cli.js purge-webhooks <name>');
   console.log('  node src/cli.js list-webhooks');
   console.log('  node src/cli.js stats');
   console.log('  node src/cli.js delete-webhook <name>');

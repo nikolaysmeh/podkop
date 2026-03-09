@@ -69,6 +69,9 @@ docker-compose exec server node src/cli.js set-credentials <name> <username> <pa
 # Remove Basic Auth from an endpoint (make it open)
 docker-compose exec server node src/cli.js disable-auth <name>
 
+# Delete all buffered (pending) webhooks for an endpoint without removing the endpoint itself
+docker-compose exec server node src/cli.js purge-webhooks <name>
+
 # List all endpoints with their secret keys
 docker-compose exec server node src/cli.js list-webhooks
 
@@ -161,6 +164,7 @@ The number of IDs per ACK request is capped by `ACK_MAX_IDS` (default: 10).
 | `CLIENT_SERVER_URL` | `http://server:{SERVER_PORT}` | Server URL as seen from the client container |
 | `CLIENT_WEBHOOKS_CONFIG` | `/app/webhooks.json` | Path to the client config file inside container |
 | `CLIENT_POLL_INTERVAL_SECONDS` | `10` | How often the client polls (applies to all entries) |
+| `CLIENT_IGNORE_TLS_ERRORS` | `false` | Set to `true` to skip TLS certificate validation when forwarding to HTTPS targets (e.g. self-signed certs). **Use only in development.** |
 | `MULTI_CLIENT_ENABLED` | `false` | Allow multiple clients to receive the same webhook |
 | `MAX_DELIVERIES_PER_WEBHOOK` | `1` | How many clients must ACK a webhook before it is deleted (only when `MULTI_CLIENT_ENABLED=true`) |
 

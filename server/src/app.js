@@ -174,6 +174,28 @@ app.patch('/api/admin/webhooks/:name/credentials', (req, res) => {
   return res.json({ ok: true, auth: 'basic' });
 });
 
+// ── Admin: purge buffered webhooks for an endpoint ───────────────────────────
+
+app.post('/api/admin/webhooks/:name/purge', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { name } = req.params;
+  const endpoint = db.prepare('SELECT id FROM endpoints WHERE name = ?').get(name);
+  if (!endpoint) {
+    return res.status(404).json({ error: `Endpoint "${name}" not found` });
+  }
+
+  const webhookIds = db.prepare('SELECT id FROM webhooks WHERE endpoint_name = ?').all(name).map(r => r.id);
+  if (webhookIds.length > 0) {
+    const ph = webhookIds.map(() => '?').join(', ');
+    db.prepare(`DELETE FROM webhook_deliveries WHERE webhook_id IN (${ph})`).run(...webhookIds);
+  }
+  const { changes: deleted } = db.prepare('DELETE FROM webhooks WHERE endpoint_name = ?').run(name);
+
+  console.log(`[admin] Purged ${deleted} webhook(s) for /${name}`);
+  res.json({ ok: true, deleted });
+});
+
 // ── Admin: delete webhook endpoint ───────────────────────────────────────────
 
 app.delete('/api/admin/webhooks/:name', (req, res) => {

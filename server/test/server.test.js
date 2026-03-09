@@ -253,6 +253,61 @@ describe('PATCH /api/admin/webhooks/:name/credentials', () => {
   });
 });
 
+describe('POST /api/admin/webhooks/:name/purge', () => {
+  test('deletes all buffered webhooks and returns count', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    await receiveWebhook('ep', { n: 1 });
+    await receiveWebhook('ep', { n: 2 });
+    await receiveWebhook('ep', { n: 3 });
+
+    const res = await request(app)
+      .post('/api/admin/webhooks/ep/purge')
+      .set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.deleted, 3);
+
+    // endpoint still exists; queue is now empty
+    const { body: { webhooks } } = await poll(secretKey);
+    assert.deepEqual(webhooks, []);
+  });
+
+  test('returns 0 when queue is already empty', async () => {
+    await createEndpoint('ep');
+    const res = await request(app)
+      .post('/api/admin/webhooks/ep/purge')
+      .set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.deleted, 0);
+  });
+
+  test('endpoint survives purge — new webhooks can be received', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    await receiveWebhook('ep');
+    await request(app).post('/api/admin/webhooks/ep/purge').set('x-admin-secret', ADMIN);
+
+    await receiveWebhook('ep', { n: 'new' });
+    const { body: { webhooks } } = await poll(secretKey);
+    assert.equal(webhooks.length, 1);
+    assert.equal(JSON.parse(webhooks[0].payload).n, 'new');
+  });
+
+  test('404 — non-existent endpoint', async () => {
+    const res = await request(app)
+      .post('/api/admin/webhooks/ghost/purge')
+      .set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 404);
+  });
+
+  test('403 — wrong admin secret', async () => {
+    await createEndpoint('ep');
+    const res = await request(app)
+      .post('/api/admin/webhooks/ep/purge')
+      .set('x-admin-secret', 'wrong');
+    assert.equal(res.status, 403);
+  });
+});
+
 describe('DELETE /api/admin/webhooks/:name', () => {
   test('deletes existing endpoint', async () => {
     await createEndpoint('todel');

@@ -103,6 +103,43 @@ Each entry in the array defines one webhook to poll and where to forward it:
 ]
 ```
 
+### Header forwarding
+
+The client replays all original request headers to the target (minus HTTP hop-by-hop headers such as `host`, `content-length`, `transfer-encoding`, etc.). One metadata header is always added:
+
+| Header | Value |
+|--------|-------|
+| `X-Original-Method` | HTTP method of the original webhook request |
+
+### Filtering and adding headers
+
+Two optional per-entry fields let you control which headers reach your target:
+
+**`strip_headers`** — remove headers from the original request before forwarding (case-insensitive):
+
+```json
+{
+  "secret_key": "...",
+  "forward_url": "http://myapp:8080/hooks",
+  "strip_headers": ["authorization", "x-hub-signature"]
+}
+```
+
+**`add_headers`** — add or override headers when forwarding (applied after `strip_headers`):
+
+```json
+{
+  "secret_key": "...",
+  "forward_url": "http://myapp:8080/hooks",
+  "add_headers": {
+    "Authorization": "Bearer my-internal-token",
+    "X-Forwarded-By": "podkop"
+  }
+}
+```
+
+Both fields are optional and can be combined in the same entry.
+
 > **Note:** `client/webhooks.json` contains secret keys — keep it out of version control and never bake it into a Docker image. The client Dockerfile copies only `src/` and `package.json`; the file is mounted at runtime via `docker-compose.yml`.
 
 After editing the file, apply changes:

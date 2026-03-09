@@ -323,6 +323,101 @@ describe('pollAndForward — original header forwarding', () => {
   });
 });
 
+describe('pollAndForward — strip_headers', () => {
+  test('removes specified headers before forwarding to target', async () => {
+    const wh = makeWebhook({
+      headers: JSON.stringify({
+        'content-type':  'application/json',
+        'authorization': 'Bearer secret',
+        'x-signature':   'sha256=abc',
+      }),
+    });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward({ ...DEFAULT_CONFIG, strip_headers: ['authorization'] });
+    const fwdHeaders = fetchCalls[1].headers;
+    assert.equal(fwdHeaders['authorization'], undefined);
+    assert.equal(fwdHeaders['x-signature'],   'sha256=abc'); // untouched
+  });
+
+  test('strip_headers matching is case-insensitive', async () => {
+    const wh = makeWebhook({
+      headers: JSON.stringify({ 'x-signature': 'sha256=abc' }),
+    });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward({ ...DEFAULT_CONFIG, strip_headers: ['X-Signature'] });
+    assert.equal(fetchCalls[1].headers['x-signature'], undefined);
+  });
+
+  test('strip_headers can remove content-type (falling back to no default)', async () => {
+    const wh = makeWebhook({ headers: '{}' });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward({ ...DEFAULT_CONFIG, strip_headers: ['content-type'] });
+    assert.equal(fetchCalls[1].headers['content-type'], undefined);
+  });
+});
+
+describe('pollAndForward — add_headers', () => {
+  test('adds extra headers to forward request', async () => {
+    const wh = makeWebhook();
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward({ ...DEFAULT_CONFIG, add_headers: { 'X-Custom': 'my-value' } });
+    assert.equal(fetchCalls[1].headers['X-Custom'], 'my-value');
+  });
+
+  test('add_headers overrides original headers', async () => {
+    const wh = makeWebhook({
+      headers: JSON.stringify({ 'content-type': 'text/plain' }),
+    });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward({ ...DEFAULT_CONFIG, add_headers: { 'content-type': 'application/xml' } });
+    assert.equal(fetchCalls[1].headers['content-type'], 'application/xml');
+  });
+
+  test('strip then add: strip removes original, add inserts replacement', async () => {
+    const wh = makeWebhook({
+      headers: JSON.stringify({ 'authorization': 'Bearer incoming-token' }),
+    });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward({
+      ...DEFAULT_CONFIG,
+      strip_headers: ['authorization'],
+      add_headers:   { 'Authorization': 'Bearer internal-token' },
+    });
+    assert.equal(fetchCalls[1].headers['Authorization'], 'Bearer internal-token');
+    assert.equal(fetchCalls[1].headers['authorization'], undefined);
+  });
+});
+
 describe('pollAndForward — ack failures', () => {
   test('does not throw when ack returns non-ok status', async () => {
     const wh = makeWebhook({ id: 1 });

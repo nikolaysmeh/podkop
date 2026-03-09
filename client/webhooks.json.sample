@@ -1,6 +1,11 @@
 [
   {
     "secret_key": "",
-    "forward_url": "http://host.docker.internal:4000/receive"
+    "forward_url": "http://host.docker.internal:4000/receive",
+    "strip_headers": ["authorization", "x-api-key"],
+    "add_headers": {
+      "X-Forwarded-By": "podkop",
+      "Authorization": "Bearer my-internal-token"
+    }
   }
 ]

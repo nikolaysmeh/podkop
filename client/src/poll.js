@@ -24,7 +24,7 @@ const OUR_HEADERS = new Set([
  * @param {string} opts.serverUrl    - Podkop server base URL
  * @param {string} opts.instanceId   - Client instance identifier
  */
-async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }) {
+async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId, strip_headers = [], add_headers = {} }) {
   const tag = `…${secret_key.slice(-8)}`;
 
   // ── Step 1: poll ──────────────────────────────────────────────────────────
@@ -77,6 +77,14 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }
 
     if (!fwdHeaders['content-type']) {
       fwdHeaders['content-type'] = 'application/json';
+    }
+
+    for (const name of strip_headers) {
+      delete fwdHeaders[name.toLowerCase()];
+    }
+
+    for (const [name, val] of Object.entries(add_headers)) {
+      fwdHeaders[name] = val;
     }
 
     fwdHeaders['X-Original-Method'] = wh.method;

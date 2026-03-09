@@ -79,10 +79,7 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }
       fwdHeaders['content-type'] = 'application/json';
     }
 
-    fwdHeaders['X-Original-Method']  = wh.method;
-    fwdHeaders['X-Webhook-Id']       = String(wh.id);
-    fwdHeaders['X-Received-At']      = wh.received_at;
-    fwdHeaders['X-Podkop-Client-Id'] = instanceId;
+    fwdHeaders['X-Original-Method'] = wh.method;
 
     debug(`[forward][${tag}][debug] #${wh.id} → POST ${forward_url}  (original method: ${wh.method})`);
     debug(`[forward][${tag}][debug] #${wh.id} headers: ${JSON.stringify(fwdHeaders)}`);

@@ -120,10 +120,10 @@ describe('pollAndForward — successful full flow', () => {
     assert.equal(fwdReq.url, FORWARD_URL);
     assert.equal(fwdReq.method, 'POST');
     assert.equal(fwdReq.body, wh.payload);
-    assert.equal(fwdReq.headers['X-Webhook-Id'], '42');
     assert.equal(fwdReq.headers['X-Original-Method'], 'POST');
-    assert.equal(fwdReq.headers['X-Received-At'], wh.received_at);
-    assert.equal(fwdReq.headers['X-Podkop-Client-Id'], INSTANCE_ID);
+    assert.equal(fwdReq.headers['X-Webhook-Id'],      undefined);
+    assert.equal(fwdReq.headers['X-Received-At'],     undefined);
+    assert.equal(fwdReq.headers['X-Podkop-Client-Id'], undefined);
 
     // Ack request
     const ackReq = fetchCalls[2];
@@ -298,11 +298,11 @@ describe('pollAndForward — original header forwarding', () => {
 
     await pollAndForward(DEFAULT_CONFIG);
     const fwdHeaders = fetchCalls[1].headers;
-    // Authoritative metadata headers are set correctly
-    assert.equal(fwdHeaders['X-Webhook-Id'],       String(wh.id));
+    // Only X-Original-Method reaches the target
     assert.equal(fwdHeaders['X-Original-Method'],  wh.method);
-    assert.equal(fwdHeaders['X-Podkop-Client-Id'], INSTANCE_ID);
-    // Lowercase spoofed versions must not be present
+    assert.equal(fwdHeaders['X-Webhook-Id'],       undefined);
+    assert.equal(fwdHeaders['X-Podkop-Client-Id'], undefined);
+    // Lowercase spoofed versions must not be present either
     assert.equal(fwdHeaders['x-webhook-id'],       undefined);
     assert.equal(fwdHeaders['x-original-method'],  undefined);
     assert.equal(fwdHeaders['x-podkop-client-id'], undefined);
@@ -318,8 +318,8 @@ describe('pollAndForward — original header forwarding', () => {
 
     await pollAndForward(DEFAULT_CONFIG);
     const fwdHeaders = fetchCalls[1].headers;
-    assert.equal(fwdHeaders['content-type'], 'application/json');
-    assert.ok(fwdHeaders['X-Webhook-Id']);
+    assert.equal(fwdHeaders['content-type'],   'application/json');
+    assert.equal(fwdHeaders['X-Original-Method'], wh.method);
   });
 });
 

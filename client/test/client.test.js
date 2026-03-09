@@ -183,7 +183,7 @@ describe('pollAndForward — batch handling', () => {
 });
 
 describe('pollAndForward — content-type handling', () => {
-  test('uses content-type from original webhook headers', async () => {
+  test('forwards content-type from original webhook headers (including charset)', async () => {
     const wh = makeWebhook({ headers: '{"content-type":"application/x-www-form-urlencoded; charset=utf-8"}' });
     mockFetch(
       { json: { webhooks: [wh] } },
@@ -192,10 +192,10 @@ describe('pollAndForward — content-type handling', () => {
     );
 
     await pollAndForward(DEFAULT_CONFIG);
-    assert.equal(fetchCalls[1].headers['Content-Type'], 'application/x-www-form-urlencoded');
+    assert.equal(fetchCalls[1].headers['content-type'], 'application/x-www-form-urlencoded; charset=utf-8');
   });
 
-  test('strips charset suffix from content-type', async () => {
+  test('forwards content-type as-is including charset suffix', async () => {
     const wh = makeWebhook({ headers: '{"content-type":"text/plain; charset=utf-8"}' });
     mockFetch(
       { json: { webhooks: [wh] } },
@@ -204,7 +204,7 @@ describe('pollAndForward — content-type handling', () => {
     );
 
     await pollAndForward(DEFAULT_CONFIG);
-    assert.equal(fetchCalls[1].headers['Content-Type'], 'text/plain');
+    assert.equal(fetchCalls[1].headers['content-type'], 'text/plain; charset=utf-8');
   });
 
   test('defaults to application/json when no content-type in original headers', async () => {
@@ -216,7 +216,7 @@ describe('pollAndForward — content-type handling', () => {
     );
 
     await pollAndForward(DEFAULT_CONFIG);
-    assert.equal(fetchCalls[1].headers['Content-Type'], 'application/json');
+    assert.equal(fetchCalls[1].headers['content-type'], 'application/json');
   });
 
   test('defaults to application/json when headers field is malformed JSON', async () => {
@@ -228,7 +228,98 @@ describe('pollAndForward — content-type handling', () => {
     );
 
     await pollAndForward(DEFAULT_CONFIG);
-    assert.equal(fetchCalls[1].headers['Content-Type'], 'application/json');
+    assert.equal(fetchCalls[1].headers['content-type'], 'application/json');
+  });
+});
+
+describe('pollAndForward — original header forwarding', () => {
+  test('forwards all non-hop-by-hop original headers to target', async () => {
+    const wh = makeWebhook({
+      headers: JSON.stringify({
+        'content-type':  'application/json',
+        'x-signature':   'sha256=abc123',
+        'x-event-type':  'order.paid',
+        'authorization': 'Bearer token',
+      }),
+    });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward(DEFAULT_CONFIG);
+    const fwdHeaders = fetchCalls[1].headers;
+    assert.equal(fwdHeaders['x-signature'],   'sha256=abc123');
+    assert.equal(fwdHeaders['x-event-type'],  'order.paid');
+    assert.equal(fwdHeaders['authorization'], 'Bearer token');
+  });
+
+  test('does not forward hop-by-hop headers (host, content-length, connection, transfer-encoding, keep-alive)', async () => {
+    const wh = makeWebhook({
+      headers: JSON.stringify({
+        'content-type':      'application/json',
+        'host':              'example.com',
+        'content-length':    '42',
+        'connection':        'keep-alive',
+        'transfer-encoding': 'chunked',
+        'keep-alive':        'timeout=5',
+      }),
+    });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward(DEFAULT_CONFIG);
+    const fwdHeaders = fetchCalls[1].headers;
+    assert.equal(fwdHeaders['host'],              undefined);
+    assert.equal(fwdHeaders['content-length'],    undefined);
+    assert.equal(fwdHeaders['connection'],        undefined);
+    assert.equal(fwdHeaders['transfer-encoding'], undefined);
+    assert.equal(fwdHeaders['keep-alive'],        undefined);
+  });
+
+  test('our X-* metadata headers override any matching originals', async () => {
+    const wh = makeWebhook({
+      headers: JSON.stringify({
+        'content-type':       'application/json',
+        'x-webhook-id':       '999',
+        'x-original-method':  'DELETE',
+        'x-podkop-client-id': 'spoofed-id',
+      }),
+    });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward(DEFAULT_CONFIG);
+    const fwdHeaders = fetchCalls[1].headers;
+    // Authoritative metadata headers are set correctly
+    assert.equal(fwdHeaders['X-Webhook-Id'],       String(wh.id));
+    assert.equal(fwdHeaders['X-Original-Method'],  wh.method);
+    assert.equal(fwdHeaders['X-Podkop-Client-Id'], INSTANCE_ID);
+    // Lowercase spoofed versions must not be present
+    assert.equal(fwdHeaders['x-webhook-id'],       undefined);
+    assert.equal(fwdHeaders['x-original-method'],  undefined);
+    assert.equal(fwdHeaders['x-podkop-client-id'], undefined);
+  });
+
+  test('null headers field falls back to default content-type and metadata only', async () => {
+    const wh = makeWebhook({ headers: null });
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+
+    await pollAndForward(DEFAULT_CONFIG);
+    const fwdHeaders = fetchCalls[1].headers;
+    assert.equal(fwdHeaders['content-type'], 'application/json');
+    assert.ok(fwdHeaders['X-Webhook-Id']);
   });
 });
 

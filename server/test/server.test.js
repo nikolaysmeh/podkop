@@ -418,6 +418,15 @@ describe('POST /:name (webhook receiver)', () => {
     assert.equal(headers['x-custom-header'], 'my-value');
   });
 
+  test('stores headers as JSON string (empty object when no custom headers)', async () => {
+    await createEndpoint('ep');
+    await request(app).post('/ep').send({ x: 1 });
+    const row = db.prepare('SELECT * FROM webhooks WHERE endpoint_name = ?').get('ep');
+    assert.ok(row.headers);
+    const headers = JSON.parse(row.headers);
+    assert.equal(typeof headers, 'object');
+  });
+
   test('401 — protected endpoint with no credentials', async () => {
     await createEndpoint('prot', { username: 'alice', password: 'pass123' });
     const res = await request(app).post('/prot').send({ test: true });
@@ -502,6 +511,23 @@ describe('POST /api/poll', () => {
     assert.ok(wh.payload);
     assert.ok(wh.headers);
     assert.ok(wh.received_at);
+  });
+
+  test('poll response includes original request headers with correct values', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    await request(app)
+      .post('/ep')
+      .set('x-custom-header', 'my-value')
+      .set('x-event-type', 'order.paid')
+      .send({ x: 1 });
+
+    const res = await poll(secretKey);
+    assert.equal(res.status, 200);
+    const wh = res.body.webhooks[0];
+    const headers = JSON.parse(wh.headers);
+    assert.equal(headers['x-custom-header'], 'my-value');
+    assert.equal(headers['x-event-type'],    'order.paid');
+    assert.ok(headers['content-type']); // content-type is always present
   });
 
   test('returns webhooks in received_at order (oldest first)', async () => {

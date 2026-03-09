@@ -3,6 +3,18 @@
 const DEBUG = process.env.CLIENT_DEBUG?.toLowerCase() === 'true';
 function debug(...args) { if (DEBUG) console.log(...args); }
 
+// Headers that must not be forwarded to the target (hop-by-hop / connection-specific)
+const HOP_BY_HOP = new Set([
+  'host', 'content-length', 'transfer-encoding', 'connection',
+  'keep-alive', 'upgrade', 'proxy-authorization', 'proxy-authenticate', 'te',
+]);
+
+// Our own metadata header names (lowercase); excluded from original headers copy
+// so they don't appear twice with mixed casing.
+const OUR_HEADERS = new Set([
+  'x-original-method', 'x-webhook-id', 'x-received-at', 'x-podkop-client-id',
+]);
+
 /**
  * Core poll-forward-ack logic, extracted for testability.
  *
@@ -48,26 +60,38 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId }
   const ackedIds = [];
 
   for (const wh of webhooks) {
-    let contentType = 'application/json';
+    // Build forward headers: copy original headers minus hop-by-hop and our metadata keys,
+    // then overlay our metadata so they are always authoritative.
+    let originalHeaders = {};
     try {
-      const originalHeaders = JSON.parse(wh.headers || '{}');
-      if (originalHeaders['content-type']) {
-        contentType = originalHeaders['content-type'].split(';')[0].trim();
-      }
+      originalHeaders = JSON.parse(wh.headers || '{}');
     } catch { /* ignore */ }
 
-    debug(`[forward][${tag}][debug] #${wh.id} method=${wh.method} payload=${wh.payload}`);
+    const fwdHeaders = {};
+    for (const [key, val] of Object.entries(originalHeaders)) {
+      const lk = key.toLowerCase();
+      if (!HOP_BY_HOP.has(lk) && !OUR_HEADERS.has(lk)) {
+        fwdHeaders[key] = val;
+      }
+    }
+
+    if (!fwdHeaders['content-type']) {
+      fwdHeaders['content-type'] = 'application/json';
+    }
+
+    fwdHeaders['X-Original-Method']  = wh.method;
+    fwdHeaders['X-Webhook-Id']       = String(wh.id);
+    fwdHeaders['X-Received-At']      = wh.received_at;
+    fwdHeaders['X-Podkop-Client-Id'] = instanceId;
+
+    debug(`[forward][${tag}][debug] #${wh.id} → POST ${forward_url}  (original method: ${wh.method})`);
+    debug(`[forward][${tag}][debug] #${wh.id} headers: ${JSON.stringify(fwdHeaders)}`);
+    debug(`[forward][${tag}][debug] #${wh.id} payload: ${wh.payload}`);
 
     try {
       const res = await fetch(forward_url, {
         method:  'POST',
-        headers: {
-          'Content-Type':       contentType,
-          'X-Original-Method':  wh.method,
-          'X-Webhook-Id':       String(wh.id),
-          'X-Received-At':      wh.received_at,
-          'X-Podkop-Client-Id': instanceId,
-        },
+        headers: fwdHeaders,
         body: wh.payload,
       });
 

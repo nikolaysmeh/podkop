@@ -31,9 +31,11 @@ const INSTANCE_ID = `${machineId}-${os.hostname()}`;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const SERVER_URL        = process.env.CLIENT_SERVER_URL;
-const CONFIG_PATH       = process.env.CLIENT_WEBHOOKS_CONFIG || '/app/webhooks.json';
-const POLL_INTERVAL_MS  = (parseInt(process.env.CLIENT_POLL_INTERVAL_SECONDS) || 10) * 1000;
+const SERVER_URL             = process.env.CLIENT_SERVER_URL;
+const CONFIG_PATH            = process.env.CLIENT_WEBHOOKS_CONFIG || '/app/webhooks.json';
+const POLL_INTERVAL_MS       = (parseInt(process.env.CLIENT_POLL_INTERVAL_SECONDS) || 10) * 1000;
+const GIVE_UP_ENABLED        = process.env.CLIENT_GIVE_UP_ENABLED?.toLowerCase() === 'true';
+const MAX_DELIVERY_ATTEMPTS  = parseInt(process.env.CLIENT_MAX_DELIVERY_ATTEMPTS) || 0;
 
 if (process.env.CLIENT_IGNORE_TLS_ERRORS?.toLowerCase() === 'true') {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -69,6 +71,9 @@ for (const entry of webhookConfigs) {
 
 console.log(`[client] Started — polling ${SERVER_URL}  every ${POLL_INTERVAL_MS / 1000}s`);
 console.log(`[client] Instance ID: ${INSTANCE_ID}`);
+if (GIVE_UP_ENABLED && MAX_DELIVERY_ATTEMPTS > 0) {
+  console.log(`[client] Give-up after ${MAX_DELIVERY_ATTEMPTS} failed delivery attempt(s)`);
+}
 webhookConfigs.forEach((e) =>
   console.log(`[client]   secret …${e.secret_key.slice(-8)}  →  ${e.forward_url}`)
 );
@@ -77,7 +82,7 @@ webhookConfigs.forEach((e) =>
 
 setTimeout(() => {
   for (const entry of webhookConfigs) {
-    const opts = { ...entry, serverUrl: SERVER_URL, instanceId: INSTANCE_ID };
+    const opts = { ...entry, serverUrl: SERVER_URL, instanceId: INSTANCE_ID, giveUpEnabled: GIVE_UP_ENABLED, maxDeliveryAttempts: MAX_DELIVERY_ATTEMPTS };
     pollAndForward(opts);
     setInterval(() => pollAndForward(opts), POLL_INTERVAL_MS);
   }

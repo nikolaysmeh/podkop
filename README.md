@@ -140,6 +140,17 @@ Two optional per-entry fields let you control which headers reach your target:
 
 Both fields are optional and can be combined in the same entry.
 
+### Giving up after repeated failures
+
+By default, if the client cannot forward a webhook to the target (non-2xx response or network error), the webhook stays on the server and is retried every poll cycle — indefinitely.
+
+Enable with `CLIENT_GIVE_UP_ENABLED=true` and set `CLIENT_MAX_DELIVERY_ATTEMPTS` to the number of consecutive failures allowed. Once a webhook reaches the limit, the client ACKs it (removing it from the server queue) and logs a warning. Failure counters are kept in memory and reset on container restart.
+
+```
+CLIENT_GIVE_UP_ENABLED=true
+CLIENT_MAX_DELIVERY_ATTEMPTS=5   # give up after 5 failed attempts
+```
+
 > **Note:** `client/webhooks.json` contains secret keys — keep it out of version control and never bake it into a Docker image. The client Dockerfile copies only `src/` and `package.json`; the file is mounted at runtime via `docker-compose.yml`.
 
 After editing the file, apply changes:
@@ -204,6 +215,8 @@ The number of IDs per ACK request is capped by `ACK_MAX_IDS` (default: 10).
 | `CLIENT_POLL_INTERVAL_SECONDS` | `10` | How often the client polls (applies to all entries) |
 | `CLIENT_IGNORE_TLS_ERRORS` | `false` | Set to `true` to skip TLS certificate validation when forwarding to HTTPS targets (e.g. self-signed certs). **Use only in development.** |
 | `CLIENT_DEBUG` | `false` | Verbose logging: full webhook payloads, forward response bodies, acked IDs |
+| `CLIENT_GIVE_UP_ENABLED` | `false` | Enable give-up on repeated forward failures. When `true`, webhooks that fail `CLIENT_MAX_DELIVERY_ATTEMPTS` times in a row are ACK-ed and removed from the server queue. |
+| `CLIENT_MAX_DELIVERY_ATTEMPTS` | `3` | Consecutive forward failures before a webhook is given up. Only used when `CLIENT_GIVE_UP_ENABLED=true`. `0` = disabled. |
 | `MULTI_CLIENT_ENABLED` | `false` | Allow multiple clients to receive the same webhook |
 | `MAX_DELIVERIES_PER_WEBHOOK` | `1` | How many clients must ACK a webhook before it is deleted (only when `MULTI_CLIENT_ENABLED=true`) |
 

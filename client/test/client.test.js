@@ -2,7 +2,7 @@
 
 const { test, describe, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { pollAndForward } = require('../src/poll');
+const { pollAndForward, failureMap } = require('../src/poll');
 
 const SERVER_URL  = 'http://server:3000';
 const FORWARD_URL = 'http://target:4000/receive';
@@ -49,7 +49,7 @@ function mockFetch(...responses) {
   };
 }
 
-beforeEach(() => { fetchCalls = []; });
+beforeEach(() => { fetchCalls = []; failureMap.clear(); });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -439,5 +439,167 @@ describe('pollAndForward — ack failures', () => {
     );
 
     await assert.doesNotReject(() => pollAndForward(DEFAULT_CONFIG));
+  });
+});
+
+describe('pollAndForward — give-up after max failures', () => {
+  const GIVE_UP_CONFIG = { ...DEFAULT_CONFIG, giveUpEnabled: true, maxDeliveryAttempts: 3 };
+
+  test('disabled when giveUpEnabled is false (default) — never ACKs failed webhooks', async () => {
+    const wh = makeWebhook({ id: 10 });
+
+    for (let i = 0; i < 3; i++) {
+      mockFetch(
+        { json: { webhooks: [wh] } },
+        { ok: false, status: 503, text: 'unavailable' },
+      );
+      await pollAndForward(DEFAULT_CONFIG); // giveUpEnabled defaults to false
+      assert.equal(fetchCalls.length, 2);  // poll + forward only, no ACK
+    }
+  });
+
+  test('disabled when giveUpEnabled=false even if maxDeliveryAttempts>0', async () => {
+    const wh = makeWebhook({ id: 10 });
+
+    for (let i = 0; i < 3; i++) {
+      mockFetch(
+        { json: { webhooks: [wh] } },
+        { ok: false, status: 503, text: 'unavailable' },
+      );
+      await pollAndForward({ ...DEFAULT_CONFIG, giveUpEnabled: false, maxDeliveryAttempts: 1 });
+      assert.equal(fetchCalls.length, 2);  // no ACK regardless
+    }
+  });
+
+  test('disabled when maxDeliveryAttempts is 0 even if giveUpEnabled=true', async () => {
+    const wh = makeWebhook({ id: 10 });
+
+    for (let i = 0; i < 3; i++) {
+      mockFetch(
+        { json: { webhooks: [wh] } },
+        { ok: false, status: 503, text: 'unavailable' },
+      );
+      await pollAndForward({ ...DEFAULT_CONFIG, giveUpEnabled: true, maxDeliveryAttempts: 0 });
+      assert.equal(fetchCalls.length, 2);  // no ACK
+    }
+  });
+
+  test('does not ACK before reaching maxDeliveryAttempts', async () => {
+    const wh = makeWebhook({ id: 11 });
+
+    for (let i = 1; i <= 2; i++) {
+      mockFetch(
+        { json: { webhooks: [wh] } },
+        { ok: false, status: 503, text: 'unavailable' },
+      );
+      await pollAndForward(GIVE_UP_CONFIG);
+      assert.equal(fetchCalls.length, 2);      // no ACK yet
+      assert.equal(failureMap.get(wh.id), i);  // counter incremented
+    }
+  });
+
+  test('ACKs webhook on the Nth failure and clears the counter', async () => {
+    const wh = makeWebhook({ id: 12 });
+
+    // Pre-load 2 failures
+    for (let i = 0; i < 2; i++) {
+      mockFetch(
+        { json: { webhooks: [wh] } },
+        { ok: false, status: 503, text: 'unavailable' },
+      );
+      await pollAndForward(GIVE_UP_CONFIG);
+    }
+
+    // 3rd failure — triggers give-up ACK
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: false, status: 503, text: 'unavailable' },
+      { json: { ok: true } },
+    );
+    await pollAndForward(GIVE_UP_CONFIG);
+
+    assert.equal(fetchCalls.length, 3); // poll + forward + ack
+    const ackBody = JSON.parse(fetchCalls[2].body);
+    assert.deepEqual(ackBody.ids, [wh.id]);
+    assert.equal(failureMap.has(wh.id), false); // counter cleared
+  });
+
+  test('success resets the failure counter', async () => {
+    const wh = makeWebhook({ id: 13 });
+
+    // 2 failures
+    for (let i = 0; i < 2; i++) {
+      mockFetch(
+        { json: { webhooks: [wh] } },
+        { ok: false, status: 503, text: 'unavailable' },
+      );
+      await pollAndForward(GIVE_UP_CONFIG);
+    }
+    assert.equal(failureMap.get(wh.id), 2);
+
+    // Success — counter should be cleared
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      { ok: true, status: 200, json: {} },
+      { json: { ok: true } },
+    );
+    await pollAndForward(GIVE_UP_CONFIG);
+
+    assert.equal(failureMap.has(wh.id), false);
+    const ackBody = JSON.parse(fetchCalls[2].body);
+    assert.deepEqual(ackBody.ids, [wh.id]); // normal ACK
+  });
+
+  test('network error counts as a failure and triggers give-up on Nth error', async () => {
+    const wh = makeWebhook({ id: 14 });
+
+    // 2 network errors
+    for (let i = 0; i < 2; i++) {
+      mockFetch(
+        { json: { webhooks: [wh] } },
+        new Error('ECONNREFUSED'),
+      );
+      await pollAndForward(GIVE_UP_CONFIG);
+    }
+
+    // 3rd error — triggers give-up
+    mockFetch(
+      { json: { webhooks: [wh] } },
+      new Error('ECONNREFUSED'),
+      { json: { ok: true } },
+    );
+    await pollAndForward(GIVE_UP_CONFIG);
+
+    assert.equal(fetchCalls.length, 3); // poll + forward attempt (threw) + ack
+    const ackBody = JSON.parse(fetchCalls[2].body);
+    assert.deepEqual(ackBody.ids, [wh.id]);
+    assert.equal(failureMap.has(wh.id), false);
+  });
+
+  test('mixed batch: given-up webhook and successful webhook are both ACKed together', async () => {
+    const wh1 = makeWebhook({ id: 20, payload: '{"n":1}' });
+    const wh2 = makeWebhook({ id: 21, payload: '{"n":2}' });
+
+    // Pre-seed wh1 with 2 failures
+    for (let i = 0; i < 2; i++) {
+      mockFetch(
+        { json: { webhooks: [wh1] } },
+        { ok: false, status: 503, text: 'unavailable' },
+      );
+      await pollAndForward(GIVE_UP_CONFIG);
+    }
+
+    // Final poll: wh1 fails (3rd → give-up), wh2 succeeds
+    mockFetch(
+      { json: { webhooks: [wh1, wh2] } },
+      { ok: false, status: 503, text: 'unavailable' }, // wh1 — 3rd failure
+      { ok: true,  status: 200, json: {} },            // wh2 — success
+      { json: { ok: true } },                          // ack both
+    );
+    await pollAndForward(GIVE_UP_CONFIG);
+
+    assert.equal(fetchCalls.length, 4); // poll + fwd1 + fwd2 + ack
+    const ackBody = JSON.parse(fetchCalls[3].body);
+    assert.deepEqual(ackBody.ids, [wh1.id, wh2.id]);
   });
 });

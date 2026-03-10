@@ -15,16 +15,22 @@ const OUR_HEADERS = new Set([
   'x-original-method', 'x-webhook-id', 'x-received-at', 'x-podkop-client-id',
 ]);
 
+// Tracks consecutive delivery failures per webhook ID across poll cycles.
+// webhookId (number) → failure count (number)
+const failureMap = new Map();
+
 /**
  * Core poll-forward-ack logic, extracted for testability.
  *
  * @param {object} opts
- * @param {string} opts.secret_key   - Endpoint secret key
- * @param {string} opts.forward_url  - URL to forward webhooks to
- * @param {string} opts.serverUrl    - Podkop server base URL
- * @param {string} opts.instanceId   - Client instance identifier
+ * @param {string} opts.secret_key           - Endpoint secret key
+ * @param {string} opts.forward_url          - URL to forward webhooks to
+ * @param {string} opts.serverUrl            - Podkop server base URL
+ * @param {string}  opts.instanceId           - Client instance identifier
+ * @param {boolean} opts.giveUpEnabled        - Enable give-up after max failures
+ * @param {number}  opts.maxDeliveryAttempts  - Give up after this many failures (only when giveUpEnabled=true)
  */
-async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId, strip_headers = [], add_headers = {} }) {
+async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId, strip_headers = [], add_headers = {}, giveUpEnabled = false, maxDeliveryAttempts = 0 }) {
   const tag = `…${secret_key.slice(-8)}`;
 
   // ── Step 1: poll ──────────────────────────────────────────────────────────
@@ -102,6 +108,7 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId, 
 
       if (res.ok) {
         ackedIds.push(wh.id);
+        failureMap.delete(wh.id);
         console.log(`[forward][${tag}] #${wh.id} → ${forward_url}  OK (${res.status})`);
         if (DEBUG) {
           const body = await res.text().catch(() => '');
@@ -109,10 +116,28 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId, 
         }
       } else {
         const text = await res.text().catch(() => '');
-        console.error(`[forward][${tag}] #${wh.id} → ${forward_url}  FAILED (${res.status}): ${text}`);
+        const failures = (failureMap.get(wh.id) || 0) + 1;
+        const limitStr = giveUpEnabled && maxDeliveryAttempts > 0 ? `/${maxDeliveryAttempts}` : '';
+        console.error(`[forward][${tag}] #${wh.id} → ${forward_url}  FAILED (${res.status}): ${text} — attempt ${failures}${limitStr}`);
+        if (giveUpEnabled && maxDeliveryAttempts > 0 && failures >= maxDeliveryAttempts) {
+          console.warn(`[forward][${tag}] #${wh.id} giving up after ${failures} failure(s) — ACK-ing to drop from server`);
+          ackedIds.push(wh.id);
+          failureMap.delete(wh.id);
+        } else {
+          failureMap.set(wh.id, failures);
+        }
       }
     } catch (err) {
-      console.error(`[forward][${tag}] #${wh.id} → ${forward_url}  ERROR: ${err.message}`);
+      const failures = (failureMap.get(wh.id) || 0) + 1;
+      const limitStr = giveUpEnabled && maxDeliveryAttempts > 0 ? `/${maxDeliveryAttempts}` : '';
+      console.error(`[forward][${tag}] #${wh.id} → ${forward_url}  ERROR: ${err.message} — attempt ${failures}${limitStr}`);
+      if (giveUpEnabled && maxDeliveryAttempts > 0 && failures >= maxDeliveryAttempts) {
+        console.warn(`[forward][${tag}] #${wh.id} giving up after ${failures} failure(s) — ACK-ing to drop from server`);
+        ackedIds.push(wh.id);
+        failureMap.delete(wh.id);
+      } else {
+        failureMap.set(wh.id, failures);
+      }
     }
   }
 
@@ -139,4 +164,4 @@ async function pollAndForward({ secret_key, forward_url, serverUrl, instanceId, 
   }
 }
 
-module.exports = { pollAndForward };
+module.exports = { pollAndForward, failureMap };

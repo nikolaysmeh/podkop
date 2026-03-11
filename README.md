@@ -32,7 +32,10 @@ External Service
 ## Quick Start
 
 ```bash
-# 1. Edit .env — set SERVER_PORT, ADMIN_SECRET
+# 1. Create per-service .env files from the samples
+cp server/.env.sample server/.env   # set ADMIN_SECRET here
+cp client/.env.sample client/.env
+cp target/.env.sample target/.env   # optional, defaults are fine
 
 # 2. Start everything
 docker-compose up --build -d
@@ -195,7 +198,27 @@ Webhooks are deleted only after a successful ACK. If the client fails to forward
 
 The number of IDs per ACK request is capped by `ACK_MAX_IDS` (default: 10).
 
-## Key Configuration (.env)
+## Configuration
+
+Each service has its own `.env` file. Docker Compose loads the root `.env` first (if present), then the per-service `.env`, which overrides any matching variables from the root file.
+
+```
+server/.env   ← server settings
+client/.env   ← client settings
+target/.env   ← target settings
+```
+
+Copy the samples to get started:
+
+```bash
+cp server/.env.sample server/.env
+cp client/.env.sample client/.env
+cp target/.env.sample target/.env
+```
+
+> **Note:** The root `.env` is **deprecated** and will be removed in a future version. It is still supported for backward compatibility — if it exists, its values serve as defaults that per-service files can override.
+
+### Server (`server/.env`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -209,16 +232,27 @@ The number of IDs per ACK request is capped by `ACK_MAX_IDS` (default: 10).
 | `WEBHOOK_RATE_LIMIT_RPM` | `60` | Max incoming requests per minute per endpoint name (0 = disabled) |
 | `CLEANUP_INTERVAL_MINUTES` | `5` | How often the cleanup job runs |
 | `WEBHOOK_MAX_AGE_MINUTES` | `60` | Delete undelivered webhooks older than this |
-| `CLI_SERVER_URL` | `http://localhost:{SERVER_PORT}` | Server URL used by the CLI (inside container) |
-| `CLIENT_SERVER_URL` | `http://server:{SERVER_PORT}` | Server URL as seen from the client container |
+| `CLI_SERVER_URL` | `http://localhost:3000` | Server URL used by the CLI (inside container) |
+| `MULTI_CLIENT_ENABLED` | `false` | Allow multiple clients to receive the same webhook |
+| `MAX_DELIVERIES_PER_WEBHOOK` | `1` | How many clients must ACK a webhook before it is deleted (only when `MULTI_CLIENT_ENABLED=true`) |
+
+### Client (`client/.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLIENT_SERVER_URL` | `http://server:3000` | Server URL as seen from the client container |
 | `CLIENT_WEBHOOKS_CONFIG` | `/app/webhooks.json` | Path to the client config file inside container |
 | `CLIENT_POLL_INTERVAL_SECONDS` | `10` | How often the client polls (applies to all entries) |
 | `CLIENT_IGNORE_TLS_ERRORS` | `false` | Set to `true` to skip TLS certificate validation when forwarding to HTTPS targets (e.g. self-signed certs). **Use only in development.** |
 | `CLIENT_DEBUG` | `false` | Verbose logging: full webhook payloads, forward response bodies, acked IDs |
 | `CLIENT_GIVE_UP_ENABLED` | `false` | Enable give-up on repeated forward failures. When `true`, webhooks that fail `CLIENT_MAX_DELIVERY_ATTEMPTS` times in a row are ACK-ed and removed from the server queue. |
 | `CLIENT_MAX_DELIVERY_ATTEMPTS` | `3` | Consecutive forward failures before a webhook is given up. Only used when `CLIENT_GIVE_UP_ENABLED=true`. `0` = disabled. |
-| `MULTI_CLIENT_ENABLED` | `false` | Allow multiple clients to receive the same webhook |
-| `MAX_DELIVERIES_PER_WEBHOOK` | `1` | How many clients must ACK a webhook before it is deleted (only when `MULTI_CLIENT_ENABLED=true`) |
+
+### Target (`target/.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TARGET_PORT` | `4000` | Target HTTP port |
 
 ## Replacing the Target
 

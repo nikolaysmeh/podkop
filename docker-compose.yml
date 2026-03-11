@@ -5,9 +5,12 @@ services:
       context: ./server
       target: production
     ports:
-      - "${SERVER_PORT}:${SERVER_PORT}"
+      - "${SERVER_PORT:-3000}:${SERVER_PORT:-3000}"
     env_file:
-      - .env
+      - path: .env
+        required: false
+      - path: ./server/.env
+        required: false
     volumes:
       - ./data:/data
     healthcheck:
@@ -23,7 +26,10 @@ services:
       context: ./client
       target: production
     env_file:
-      - .env
+      - path: .env
+        required: false
+      - path: ./client/.env
+        required: false
     volumes:
       - ./client/webhooks.json:/app/webhooks.json:ro
     restart: unless-stopped
@@ -31,9 +37,12 @@ services:
   target:
     build: ./target
     ports:
-      - "${TARGET_PORT}:${TARGET_PORT}"
+      - "${TARGET_PORT:-4000}:${TARGET_PORT:-4000}"
     env_file:
-      - .env
+      - path: .env
+        required: false
+      - path: ./target/.env
+        required: false
     restart: unless-stopped
 
   server-test:

@@ -57,6 +57,23 @@ Webhook "mywebhook" created.
 docker-compose up -d client
 ```
 
+## Admin Panel
+
+The server ships a built-in web UI available at `http://your-server:PORT/admin/`.
+
+**Login:** the password is the value of `ADMIN_SECRET` from `server/.env`.
+
+**Features:**
+
+| Tab | What you can do |
+|-----|----------------|
+| Dashboard | Stats overview (endpoint count, total pending), per-endpoint pending & delivery counts |
+| Endpoints | Create endpoints (with optional Basic Auth), copy webhook URL, update or remove credentials, inspect and delete individual buffered messages, purge all buffered webhooks, delete endpoints |
+| Logs | Live server log viewer with level filtering (info / warn / error), auto-scroll, 5-second live refresh |
+| Settings | Read-only table of current server configuration values |
+
+> Session expires after 8 hours. Sessions are in-memory and reset on container restart.
+
 ## Managing Webhook Endpoints
 
 ```bash
@@ -83,6 +100,9 @@ docker-compose exec server node src/cli.js stats
 
 # Delete an endpoint (also deletes all its buffered webhooks)
 docker-compose exec server node src/cli.js delete-webhook <name>
+
+# Delete a single buffered webhook message by its ID
+docker-compose exec server node src/cli.js delete-message <name> <id>
 ```
 
 - Name may only contain letters, digits, `-` and `_`

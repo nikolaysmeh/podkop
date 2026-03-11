@@ -4,6 +4,7 @@ const crypto  = require('crypto');
 const express = require('express');
 const bcrypt  = require('bcryptjs');
 const db      = require('./db');
+const { isAuthenticated, setupAdminRoutes } = require('./admin');
 
 const ADMIN_SECRET         = process.env.ADMIN_SECRET                       || '';
 const POLL_BATCH_SIZE      = parseInt(process.env.POLL_BATCH_SIZE)           || 10;
@@ -80,7 +81,8 @@ function parseBasicAuth(req) {
 }
 
 function requireAdmin(req, res) {
-  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+  const hasSecret = ADMIN_SECRET && req.headers['x-admin-secret'] === ADMIN_SECRET;
+  if (!hasSecret && !isAuthenticated(req)) {
     res.status(403).json({ error: 'Forbidden' });
     return false;
   }
@@ -222,6 +224,46 @@ app.delete('/api/admin/webhooks/:name', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Admin: list buffered messages for an endpoint ────────────────────────────
+
+app.get('/api/admin/webhooks/:name/messages', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { name } = req.params;
+  const endpoint = db.prepare('SELECT id FROM endpoints WHERE name = ?').get(name);
+  if (!endpoint) {
+    return res.status(404).json({ error: `Endpoint "${name}" not found` });
+  }
+
+  const messages = db.prepare(
+    'SELECT id, method, payload, headers, received_at FROM webhooks WHERE endpoint_name = ? ORDER BY received_at DESC LIMIT 200'
+  ).all(name);
+
+  res.json({ messages });
+});
+
+// ── Admin: delete a specific buffered message ─────────────────────────────────
+
+app.delete('/api/admin/webhooks/:name/messages/:id', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { name, id } = req.params;
+  const endpoint = db.prepare('SELECT id FROM endpoints WHERE name = ?').get(name);
+  if (!endpoint) {
+    return res.status(404).json({ error: `Endpoint "${name}" not found` });
+  }
+
+  db.prepare('DELETE FROM webhook_deliveries WHERE webhook_id = ?').run(id);
+  const { changes } = db.prepare('DELETE FROM webhooks WHERE id = ? AND endpoint_name = ?').run(id, name);
+
+  if (!changes) {
+    return res.status(404).json({ error: `Message ${id} not found in "${name}"` });
+  }
+
+  console.log(`[admin] Deleted message ${id} from /${name}`);
+  res.json({ ok: true });
+});
+
 // ── Admin: stats ─────────────────────────────────────────────────────────────
 
 app.get('/api/admin/stats', (req, res) => {
@@ -358,6 +400,10 @@ app.post('/api/ack', (req, res) => {
 
   res.json({ ok: true, deleted });
 });
+
+// ── Admin panel ───────────────────────────────────────────────────────────────
+
+setupAdminRoutes(app, ADMIN_SECRET);
 
 // ── Webhook receiver — catch-all /{name} ──────────────────────────────────────
 

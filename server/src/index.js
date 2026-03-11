@@ -1,5 +1,8 @@
 'use strict';
 
+const { setupLogCapture } = require('./logs');
+setupLogCapture();
+
 require('dotenv').config();
 
 const db  = require('./db');

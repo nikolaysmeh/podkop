@@ -13,6 +13,7 @@
  *   node src/cli.js list-webhooks
  *   node src/cli.js stats
  *   node src/cli.js delete-webhook <name>
+ *   node src/cli.js delete-message <name> <id>
  *
  * Via docker-compose:
  *   docker-compose exec server node src/cli.js create-webhook mywebhook
@@ -22,6 +23,7 @@
  *   docker-compose exec server node src/cli.js list-webhooks
  *   docker-compose exec server node src/cli.js stats
  *   docker-compose exec server node src/cli.js delete-webhook mywebhook
+ *   docker-compose exec server node src/cli.js delete-message mywebhook 42
  */
 
 require('dotenv').config();
@@ -194,6 +196,20 @@ async function purgeWebhooks(name) {
   }
 }
 
+async function deleteMessage(name, id) {
+  const result = await deleteJSON(
+    `${SERVER_URL}/api/admin/webhooks/${encodeURIComponent(name)}/messages/${encodeURIComponent(id)}`,
+    { 'X-Admin-Secret': ADMIN_SECRET }
+  );
+
+  if (result.status === 200) {
+    console.log(`Message ${id} deleted from "${name}".`);
+  } else {
+    console.error(`Error ${result.status}: ${JSON.stringify(result.body)}`);
+    process.exit(1);
+  }
+}
+
 async function deleteWebhook(name) {
   const result = await deleteJSON(
     `${SERVER_URL}/api/admin/webhooks/${encodeURIComponent(name)}`,
@@ -297,6 +313,21 @@ async function main() {
     return;
   }
 
+  if (command === 'delete-message') {
+    const [name, id] = args;
+    if (!name || !id) {
+      console.error('Usage: node src/cli.js delete-message <name> <id>');
+      process.exit(1);
+    }
+    try {
+      await deleteMessage(name, id);
+    } catch (err) {
+      console.error(`Cannot reach server at ${SERVER_URL}: ${err.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   if (command === 'delete-webhook') {
     const [name] = args;
     if (!name) {
@@ -320,6 +351,7 @@ async function main() {
   console.log('  node src/cli.js list-webhooks');
   console.log('  node src/cli.js stats');
   console.log('  node src/cli.js delete-webhook <name>');
+  console.log('  node src/cli.js delete-message <name> <id>');
 }
 
 main();

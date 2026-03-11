@@ -345,6 +345,82 @@ describe('DELETE /api/admin/webhooks/:name', () => {
   });
 });
 
+describe('GET /api/admin/webhooks/:name/messages', () => {
+  test('returns empty array when no messages', async () => {
+    await createEndpoint('ep');
+    const res = await request(app).get('/api/admin/webhooks/ep/messages').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.messages, []);
+  });
+
+  test('returns buffered messages with payload', async () => {
+    await createEndpoint('ep');
+    await receiveWebhook('ep', { x: 1 });
+    await receiveWebhook('ep', { x: 2 });
+
+    const res = await request(app).get('/api/admin/webhooks/ep/messages').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.messages.length, 2);
+    assert.ok(res.body.messages[0].id);
+    assert.ok(res.body.messages[0].method);
+    assert.ok(res.body.messages[0].received_at);
+  });
+
+  test('404 — non-existent endpoint', async () => {
+    const res = await request(app).get('/api/admin/webhooks/ghost/messages').set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 404);
+  });
+
+  test('403 — wrong admin secret', async () => {
+    await createEndpoint('ep');
+    const res = await request(app).get('/api/admin/webhooks/ep/messages').set('x-admin-secret', 'wrong');
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('DELETE /api/admin/webhooks/:name/messages/:id', () => {
+  test('deletes specific message by id', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    await receiveWebhook('ep', { n: 1 });
+    await receiveWebhook('ep', { n: 2 });
+
+    const listRes = await request(app).get('/api/admin/webhooks/ep/messages').set('x-admin-secret', ADMIN);
+    const id = listRes.body.messages[0].id;
+
+    const delRes = await request(app)
+      .delete(`/api/admin/webhooks/ep/messages/${id}`)
+      .set('x-admin-secret', ADMIN);
+    assert.equal(delRes.status, 200);
+    assert.equal(delRes.body.ok, true);
+
+    const { body: { webhooks } } = await poll(secretKey);
+    assert.equal(webhooks.length, 1);
+  });
+
+  test('404 — message not found', async () => {
+    await createEndpoint('ep');
+    const res = await request(app)
+      .delete('/api/admin/webhooks/ep/messages/99999')
+      .set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 404);
+  });
+
+  test('404 — endpoint not found', async () => {
+    const res = await request(app)
+      .delete('/api/admin/webhooks/ghost/messages/1')
+      .set('x-admin-secret', ADMIN);
+    assert.equal(res.status, 404);
+  });
+
+  test('403 — wrong admin secret', async () => {
+    await createEndpoint('ep');
+    const res = await request(app)
+      .delete('/api/admin/webhooks/ep/messages/1')
+      .set('x-admin-secret', 'wrong');
+    assert.equal(res.status, 403);
+  });
+});
+
 describe('GET /api/admin/stats', () => {
   test('returns empty stats when no endpoints', async () => {
     const res = await request(app).get('/api/admin/stats').set('x-admin-secret', ADMIN);

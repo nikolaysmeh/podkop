@@ -11,7 +11,7 @@ const app = require('./app');
 const PORT                     = parseInt(process.env.SERVER_PORT)             || 3000;
 const CLEANUP_INTERVAL_MINUTES = parseInt(process.env.CLEANUP_INTERVAL_MINUTES) || 5;
 const WEBHOOK_MAX_AGE_MINUTES  = parseInt(process.env.WEBHOOK_MAX_AGE_MINUTES)  || 60;
-const POLL_BATCH_SIZE          = parseInt(process.env.POLL_BATCH_SIZE)          || 10;
+const BATCH_SIZE          = parseInt(process.env.BATCH_SIZE)          || 10;
 
 // ── Cleanup job ───────────────────────────────────────────────────────────────
 
@@ -40,5 +40,5 @@ setInterval(() => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Webhook server on port ${PORT}`);
-  console.log(`  cleanup every ${CLEANUP_INTERVAL_MINUTES} min | max age ${WEBHOOK_MAX_AGE_MINUTES} min | batch ${POLL_BATCH_SIZE}`);
+  console.log(`  cleanup every ${CLEANUP_INTERVAL_MINUTES} min | max age ${WEBHOOK_MAX_AGE_MINUTES} min | batch ${BATCH_SIZE}`);
 });

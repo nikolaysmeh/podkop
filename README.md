@@ -95,6 +95,7 @@ SSL_HOST=webhooks.example.com
 
 - `SSL_HOST` must be a public domain name that resolves to this host.
 - Port `80` and `SERVER_PORT` must be open on the host firewall.
+- Add `- "80:80"` to the server ports in `docker-compose.yml` (needed for the ACME HTTP-01 challenge). Alternatively, set `SERVER_PORT=443` — Caddy will then use the TLS-ALPN-01 challenge and does not need port 80.
 
 **Notes:**
 
@@ -244,7 +245,7 @@ POST /api/ack
 
 Webhooks are deleted only after a successful ACK. If the client fails to forward a webhook, it stays on the server and is retried on the next poll cycle.
 
-The number of IDs per ACK request is capped by `ACK_MAX_IDS` (default: 10).
+The number of IDs per ACK request is capped by `BATCH_SIZE` (default: 10).
 
 ## Configuration
 
@@ -276,8 +277,7 @@ cp target/.env.sample target/.env
 | `DB_PATH` | `/data/webhooks.db` | SQLite file path inside container |
 | `ADMIN_SECRET` | — | Protects admin endpoints — **change this** |
 | `SERVER_DEBUG` | `false` | Verbose logging: full request headers, body, returned/acked IDs |
-| `POLL_BATCH_SIZE` | `10` | Webhooks returned per poll request |
-| `ACK_MAX_IDS` | `10` | Maximum IDs allowed in a single ACK request |
+| `BATCH_SIZE` | `10` | Webhooks returned per poll request and max IDs allowed in a single ACK request |
 | `WEBHOOK_BODY_LIMIT` | `2mb` | Maximum request body size accepted by the webhook receiver |
 | `WEBHOOK_RATE_LIMIT_RPM` | `60` | Max incoming requests per minute per endpoint name (0 = disabled) |
 | `CLEANUP_INTERVAL_MINUTES` | `5` | How often the cleanup job runs |

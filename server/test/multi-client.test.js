@@ -5,7 +5,7 @@ process.env.DB_PATH                    = ':memory:';
 process.env.ADMIN_SECRET               = 'test-secret';
 process.env.MULTI_CLIENT_ENABLED       = 'true';
 process.env.MAX_DELIVERIES_PER_WEBHOOK = '2';
-process.env.POLL_BATCH_SIZE            = '10';
+process.env.BATCH_SIZE                 = '10';
 
 const { test, describe, beforeEach } = require('node:test');
 const assert  = require('node:assert/strict');

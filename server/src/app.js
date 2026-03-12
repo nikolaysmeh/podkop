@@ -7,10 +7,9 @@ const db      = require('./db');
 const { isAuthenticated, setupAdminRoutes } = require('./admin');
 
 const ADMIN_SECRET         = process.env.ADMIN_SECRET                       || '';
-const POLL_BATCH_SIZE      = parseInt(process.env.POLL_BATCH_SIZE)           || 10;
+const BATCH_SIZE           = parseInt(process.env.BATCH_SIZE)                || 10;
 const MULTI_CLIENT_ENABLED = process.env.MULTI_CLIENT_ENABLED?.toLowerCase() === 'true';
 const MAX_DELIVERIES       = parseInt(process.env.MAX_DELIVERIES_PER_WEBHOOK) || 1;
-const ACK_MAX_IDS          = parseInt(process.env.ACK_MAX_IDS)               || 10;
 const WEBHOOK_BODY_LIMIT   = process.env.WEBHOOK_BODY_LIMIT                  || '2mb';
 const DEBUG                = process.env.SERVER_DEBUG?.toLowerCase()         === 'true';
 
@@ -341,7 +340,7 @@ app.post('/api/poll', (req, res) => {
           )
         ORDER  BY received_at ASC
         LIMIT  ?
-      `).all(endpoint.name, clientId, POLL_BATCH_SIZE);
+      `).all(endpoint.name, clientId, BATCH_SIZE);
     } else {
       webhooks = db.prepare(`
         SELECT id, method, payload, headers, received_at
@@ -349,7 +348,7 @@ app.post('/api/poll', (req, res) => {
         WHERE  endpoint_name = ?
         ORDER  BY received_at ASC
         LIMIT  ?
-      `).all(endpoint.name, POLL_BATCH_SIZE);
+      `).all(endpoint.name, BATCH_SIZE);
     }
   } else {
     webhooks = db.prepare(`
@@ -358,7 +357,7 @@ app.post('/api/poll', (req, res) => {
       WHERE  endpoint_name = ?
       ORDER  BY received_at ASC
       LIMIT  ?
-    `).all(endpoint.name, POLL_BATCH_SIZE);
+    `).all(endpoint.name, BATCH_SIZE);
   }
 
   debug(`[poll][debug] "/${endpoint.name}" → returning ${webhooks.length} webhook(s) ids=[${webhooks.map(w => w.id).join(', ')}]`);
@@ -377,8 +376,8 @@ app.post('/api/ack', (req, res) => {
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids must be a non-empty array' });
   }
-  if (ids.length > ACK_MAX_IDS) {
-    return res.status(400).json({ error: `ids must contain at most ${ACK_MAX_IDS} entries` });
+  if (ids.length > BATCH_SIZE) {
+    return res.status(400).json({ error: `ids must contain at most ${BATCH_SIZE} entries` });
   }
 
   const endpoint = findBySecret(secret_key);

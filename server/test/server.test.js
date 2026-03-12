@@ -5,8 +5,7 @@ process.env.DB_PATH                   = ':memory:';
 process.env.ADMIN_SECRET              = 'test-secret';
 process.env.MULTI_CLIENT_ENABLED      = 'false';
 process.env.MAX_DELIVERIES_PER_WEBHOOK = '1';
-process.env.POLL_BATCH_SIZE           = '5';
-process.env.ACK_MAX_IDS               = '10';
+process.env.BATCH_SIZE                = '5';
 
 const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert  = require('node:assert/strict');
@@ -620,7 +619,7 @@ describe('POST /api/poll', () => {
     assert.equal(payloads[2].n, 3);
   });
 
-  test('respects POLL_BATCH_SIZE (set to 5 in test env)', async () => {
+  test('respects BATCH_SIZE (set to 5 in test env)', async () => {
     const { body: { secretKey } } = await createEndpoint('ep');
     for (let i = 0; i < 10; i++) await receiveWebhook('ep', { n: i });
 
@@ -647,21 +646,21 @@ describe('POST /api/ack', () => {
     assert.equal(res.status, 400);
   });
 
-  test('400 — ids exceeds ACK_MAX_IDS limit', async () => {
+  test('400 — ids exceeds BATCH_SIZE limit', async () => {
     const { body: { secretKey } } = await createEndpoint('ep');
-    const tooMany = Array.from({ length: 11 }, (_, i) => i + 1);
+    const tooMany = Array.from({ length: 6 }, (_, i) => i + 1);
     const res = await ack(secretKey, tooMany);
     assert.equal(res.status, 400);
-    assert.ok(res.body.error.includes('10'));
+    assert.ok(res.body.error.includes('5'));
   });
 
-  test('accepts ids up to ACK_MAX_IDS limit', async () => {
+  test('accepts ids up to BATCH_SIZE limit', async () => {
     const { body: { secretKey } } = await createEndpoint('ep');
     // Insert 10 webhooks directly to avoid rate limiting
     for (let i = 0; i < 10; i++) {
       db.prepare('INSERT INTO webhooks (endpoint_name, method, payload) VALUES (?, ?, ?)').run('ep', 'POST', '{}');
     }
-    const { body: { webhooks } } = await poll(secretKey); // returns up to POLL_BATCH_SIZE=5
+    const { body: { webhooks } } = await poll(secretKey); // returns up to BATCH_SIZE=5
     const ids = webhooks.map(w => w.id);
     const res = await ack(secretKey, ids);
     assert.equal(res.status, 200);

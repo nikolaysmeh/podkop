@@ -15,7 +15,9 @@ CMD ["npm", "test"]
 
 # ── Production stage ─────────────────────────────────────────────────────────
 FROM base AS production
+RUN apk add --no-cache su-exec
 RUN npm install --omit=dev
 COPY . .
-USER node
+RUN chmod +x docker-entrypoint.sh
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "src/index.js"]

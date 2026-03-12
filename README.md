@@ -74,6 +74,34 @@ The server ships a built-in web UI available at `http://your-server:PORT/admin/`
 
 > Session expires after 8 hours. Sessions are in-memory and reset on container restart.
 
+## HTTPS / SSL
+
+Set `SSL_SUPPORTED=true` in `server/.env` to enable automatic HTTPS via [Caddy](https://caddyserver.com/),
+which runs inside the same container as the server.
+
+```
+SSL_SUPPORTED=true
+SSL_HOST=webhooks.example.com
+```
+
+**How it works:**
+
+- Caddy obtains a TLS certificate from Let's Encrypt for `SSL_HOST` on first start.
+- Caddy listens on `SERVER_PORT` (HTTPS) and port `80` (ACME HTTP-01 challenge).
+- Node.js listens internally on `SERVER_PORT + 1` (not exposed outside the container).
+- The server is reachable at `https://SSL_HOST:SERVER_PORT`.
+
+**Requirements:**
+
+- `SSL_HOST` must be a public domain name that resolves to this host.
+- Port `80` and `SERVER_PORT` must be open on the host firewall.
+
+**Notes:**
+
+- Certificates are stored in the `caddy_data` Docker volume and reused on restart.
+- Update `CLIENT_SERVER_URL` to `https://` when SSL is enabled.
+- The admin panel is available at `https://SSL_HOST:SERVER_PORT/admin/`.
+
 ## Managing Webhook Endpoints
 
 ```bash
@@ -242,7 +270,9 @@ cp target/.env.sample target/.env
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVER_PORT` | `3000` | Server HTTP port |
+| `SERVER_PORT` | `3000` | Server HTTP port (or HTTPS port when `SSL_SUPPORTED=true`) |
+| `SSL_SUPPORTED` | `false` | Enable HTTPS via Caddy |
+| `SSL_HOST` | — | Public hostname for the TLS certificate (required when `SSL_SUPPORTED=true`) |
 | `DB_PATH` | `/data/webhooks.db` | SQLite file path inside container |
 | `ADMIN_SECRET` | — | Protects admin endpoints — **change this** |
 | `SERVER_DEBUG` | `false` | Verbose logging: full request headers, body, returned/acked IDs |

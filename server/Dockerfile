@@ -15,7 +15,7 @@ CMD ["npm", "test"]
 
 # ── Production stage ─────────────────────────────────────────────────────────
 FROM base AS production
-RUN apk add --no-cache su-exec
+RUN apk add --no-cache su-exec caddy --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community
 RUN npm install --omit=dev
 COPY . .
 RUN chmod +x docker-entrypoint.sh

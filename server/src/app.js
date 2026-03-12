@@ -21,6 +21,13 @@ const config = {
   rateLimitRpm: parseInt(process.env.WEBHOOK_RATE_LIMIT_RPM) || 60,
 };
 
+// Allowed-hosts config — mutable so tests can override at runtime
+const hostsConfig = {
+  allowedHosts: process.env.WEBHOOK_ALLOWED_HOSTS
+    ? new Set(process.env.WEBHOOK_ALLOWED_HOSTS.split(',').map(h => h.trim()).filter(Boolean))
+    : null,
+};
+
 const RESERVED = new Set(['api', 'health', 'admin']);
 
 // ── In-memory rate limiter (sliding 60-second window, per endpoint name) ─────
@@ -78,6 +85,13 @@ function parseBasicAuth(req) {
   } catch {
     return null;
   }
+}
+
+function checkAllowedHost(req, res) {
+  if (!hostsConfig.allowedHosts) return true;
+  if (hostsConfig.allowedHosts.has(req.hostname)) return true;
+  res.status(403).json({ error: 'Forbidden' });
+  return false;
 }
 
 function requireAdmin(req, res) {
@@ -292,6 +306,7 @@ app.get('/api/admin/stats', (req, res) => {
 // ── Poll: return undelivered webhooks ─────────────────────────────────────────
 
 app.post('/api/poll', (req, res) => {
+  if (!checkAllowedHost(req, res)) return;
   const { secret_key } = req.body || {};
 
   if (!secret_key) {
@@ -343,6 +358,7 @@ app.post('/api/poll', (req, res) => {
 // ── ACK: delete delivered webhooks ────────────────────────────────────────────
 
 app.post('/api/ack', (req, res) => {
+  if (!checkAllowedHost(req, res)) return;
   const { secret_key, ids } = req.body || {};
 
   if (!secret_key) {
@@ -408,6 +424,7 @@ setupAdminRoutes(app, ADMIN_SECRET);
 // ── Webhook receiver — catch-all /{name} ──────────────────────────────────────
 
 app.all('/:name', (req, res) => {
+  if (!checkAllowedHost(req, res)) return;
   const { name } = req.params;
 
   const endpoint = db.prepare('SELECT * FROM endpoints WHERE name = ?').get(name);
@@ -441,4 +458,5 @@ app.all('/:name', (req, res) => {
 
 module.exports = app;
 module.exports.config       = config;
+module.exports.hostsConfig  = hostsConfig;
 module.exports.rateLimitMap = rateLimitMap;

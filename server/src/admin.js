@@ -59,6 +59,7 @@ function getCurrentConfig() {
     WEBHOOK_RATE_LIMIT_RPM:     process.env.WEBHOOK_RATE_LIMIT_RPM     || '60',
     MULTI_CLIENT_ENABLED:       process.env.MULTI_CLIENT_ENABLED       || 'false',
     MAX_DELIVERIES_PER_WEBHOOK: process.env.MAX_DELIVERIES_PER_WEBHOOK || '1',
+    WEBHOOK_ALLOWED_HOSTS:      process.env.WEBHOOK_ALLOWED_HOSTS      || '',
   };
 }
 

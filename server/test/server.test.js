@@ -8,7 +8,7 @@ process.env.MAX_DELIVERIES_PER_WEBHOOK = '1';
 process.env.POLL_BATCH_SIZE           = '5';
 process.env.ACK_MAX_IDS               = '10';
 
-const { test, describe, beforeEach } = require('node:test');
+const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert  = require('node:assert/strict');
 const request = require('supertest');
 const db      = require('../src/db');
@@ -735,5 +735,60 @@ describe('Full end-to-end flow', () => {
     const poll2 = await poll(secretKey);
     assert.equal(poll2.body.webhooks.length, 1);
     assert.equal(poll2.body.webhooks[0].id, poll1.body.webhooks[0].id);
+  });
+});
+
+describe('WEBHOOK_ALLOWED_HOSTS host filtering', () => {
+  beforeEach(() => {
+    app.hostsConfig.allowedHosts = new Set(['allowed.com']);
+  });
+
+  afterEach(() => {
+    app.hostsConfig.allowedHosts = null;
+  });
+
+  test('webhook: allowed host → 200', async () => {
+    await createEndpoint('ep');
+    const res = await request(app).post('/ep').set('Host', 'allowed.com').send({ x: 1 });
+    assert.equal(res.status, 200);
+  });
+
+  test('webhook: disallowed host → 403', async () => {
+    await createEndpoint('ep');
+    const res = await request(app).post('/ep').set('Host', 'other.com').send({ x: 1 });
+    assert.equal(res.status, 403);
+  });
+
+  test('poll: allowed host → 200', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    const res = await request(app).post('/api/poll').set('Host', 'allowed.com').send({ secret_key: secretKey });
+    assert.equal(res.status, 200);
+  });
+
+  test('poll: disallowed host → 403', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    const res = await request(app).post('/api/poll').set('Host', 'other.com').send({ secret_key: secretKey });
+    assert.equal(res.status, 403);
+  });
+
+  test('ack: disallowed host → 403', async () => {
+    const { body: { secretKey } } = await createEndpoint('ep');
+    const res = await request(app).post('/api/ack').set('Host', 'other.com').send({ secret_key: secretKey, ids: [1] });
+    assert.equal(res.status, 403);
+  });
+
+  test('multiple allowed hosts all pass', async () => {
+    app.hostsConfig.allowedHosts = new Set(['host1.com', 'host2.com']);
+    await createEndpoint('ep');
+    assert.equal((await request(app).post('/ep').set('Host', 'host1.com').send({ x: 1 })).status, 200);
+    assert.equal((await request(app).post('/ep').set('Host', 'host2.com').send({ x: 1 })).status, 200);
+    assert.equal((await request(app).post('/ep').set('Host', 'other.com').send({ x: 1 })).status, 403);
+  });
+
+  test('no restriction when allowedHosts is null', async () => {
+    app.hostsConfig.allowedHosts = null;
+    await createEndpoint('ep');
+    const res = await request(app).post('/ep').set('Host', 'any-host.com').send({ x: 1 });
+    assert.equal(res.status, 200);
   });
 });

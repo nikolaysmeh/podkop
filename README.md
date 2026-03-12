@@ -252,10 +252,10 @@ cp target/.env.sample target/.env
 | `WEBHOOK_RATE_LIMIT_RPM` | `60` | Max incoming requests per minute per endpoint name (0 = disabled) |
 | `CLEANUP_INTERVAL_MINUTES` | `5` | How often the cleanup job runs |
 | `WEBHOOK_MAX_AGE_MINUTES` | `60` | Delete undelivered webhooks older than this |
-| `CLI_SERVER_URL` | `http://localhost:3000` | Server URL used by the CLI (inside container) |
+| `CLI_SERVER_HOST` | `localhost` | Hostname the CLI uses to reach the server (inside container). The CLI constructs the URL as `http://<host>:<SERVER_PORT>`. |
 | `MULTI_CLIENT_ENABLED` | `false` | Allow multiple clients to receive the same webhook |
 | `MAX_DELIVERIES_PER_WEBHOOK` | `1` | How many clients must ACK a webhook before it is deleted (only when `MULTI_CLIENT_ENABLED=true`) |
-| `WEBHOOK_ALLOWED_HOSTS` | — | Comma-separated list of hostnames that are allowed to send webhooks or poll (e.g. `webhooks.example.com,api.example.com`). Requests arriving on any other hostname receive `403`. Leave unset to allow all hosts. |
+| `WEBHOOK_ALLOWED_HOSTS` | — | Comma-separated allowed hostnames for webhook and poll requests. Protocol and port are ignored — only the hostname is matched (e.g. `webhooks.example.com,api.example.com` or `https://webhooks.example.com:8080`). Requests on any other hostname receive `403`. Leave unset to allow all hosts. |
 
 ### Client (`client/.env`)
 

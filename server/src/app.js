@@ -21,10 +21,20 @@ const config = {
   rateLimitRpm: parseInt(process.env.WEBHOOK_RATE_LIMIT_RPM) || 60,
 };
 
+function extractHostname(raw) {
+  const s = raw.trim();
+  if (!s) return '';
+  try {
+    return new URL(s.includes('://') ? s : `http://${s}`).hostname;
+  } catch {
+    return s.replace(/:\d+$/, '');
+  }
+}
+
 // Allowed-hosts config — mutable so tests can override at runtime
 const hostsConfig = {
   allowedHosts: process.env.WEBHOOK_ALLOWED_HOSTS
-    ? new Set(process.env.WEBHOOK_ALLOWED_HOSTS.split(',').map(h => h.trim()).filter(Boolean))
+    ? new Set(process.env.WEBHOOK_ALLOWED_HOSTS.split(',').map(extractHostname).filter(Boolean))
     : null,
 };
 
@@ -457,6 +467,7 @@ app.all('/:name', (req, res) => {
 });
 
 module.exports = app;
-module.exports.config       = config;
-module.exports.hostsConfig  = hostsConfig;
-module.exports.rateLimitMap = rateLimitMap;
+module.exports.config          = config;
+module.exports.hostsConfig     = hostsConfig;
+module.exports.rateLimitMap    = rateLimitMap;
+module.exports.extractHostname = extractHostname;

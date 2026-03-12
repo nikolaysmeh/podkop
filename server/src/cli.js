@@ -30,8 +30,7 @@ require('dotenv').config();
 
 const http = require('http');
 
-const SERVER_URL   = process.env.CLI_SERVER_URL
-                  || `http://localhost:${process.env.SERVER_PORT || 3000}`;
+const SERVER_URL   = `http://${process.env.CLI_SERVER_HOST || 'localhost'}:${process.env.SERVER_PORT || 3000}`;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────

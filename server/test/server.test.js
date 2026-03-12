@@ -13,6 +13,7 @@ const assert  = require('node:assert/strict');
 const request = require('supertest');
 const db      = require('../src/db');
 const app     = require('../src/app');
+const { extractHostname } = app;
 
 const ADMIN = 'test-secret';
 
@@ -790,5 +791,31 @@ describe('WEBHOOK_ALLOWED_HOSTS host filtering', () => {
     await createEndpoint('ep');
     const res = await request(app).post('/ep').set('Host', 'any-host.com').send({ x: 1 });
     assert.equal(res.status, 200);
+  });
+});
+
+describe('extractHostname', () => {
+  test('plain hostname unchanged', () => {
+    assert.equal(extractHostname('example.com'), 'example.com');
+  });
+
+  test('strips port', () => {
+    assert.equal(extractHostname('example.com:3000'), 'example.com');
+  });
+
+  test('strips https:// and port', () => {
+    assert.equal(extractHostname('https://example.com:8080'), 'example.com');
+  });
+
+  test('strips http://', () => {
+    assert.equal(extractHostname('http://example.com'), 'example.com');
+  });
+
+  test('strips trailing path', () => {
+    assert.equal(extractHostname('https://example.com:8080/some/path'), 'example.com');
+  });
+
+  test('empty string returns empty string', () => {
+    assert.equal(extractHostname(''), '');
   });
 });

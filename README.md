@@ -86,18 +86,30 @@ SSL_HOST=webhooks.example.com
 
 **How it works:**
 
-- Caddy obtains a TLS certificate from Let's Encrypt for `SSL_HOST` on first start.
-- Certificate is obtained via **TLS-ALPN-01 challenge** on `SERVER_PORT` — no port 80 needed.
-- Node.js listens internally on `SERVER_PORT + 1` (not exposed outside the container).
+- Caddy obtains a TLS certificate from Let's Encrypt via **HTTP-01 challenge** on `SSL_HTTP_CHALLENGE_PORT`.
+- Caddy listens for HTTPS traffic on `SERVER_PORT`; Node.js listens internally on `SERVER_PORT + 1`.
 - The server is reachable at `https://SSL_HOST:SERVER_PORT`.
 
 **Requirements:**
 
-- `SSL_HOST` must be a public domain name that resolves to this host.
-- **`SERVER_PORT` must be `443`** — the TLS-ALPN-01 challenge requires port 443 to be reachable from the internet (ACME spec). Port 80 is not used.
+- `SSL_HOST` must be a public domain resolving to this host.
+- `SERVER_PORT` must be open on the host firewall.
+- Port 80 must be open and **nginx must proxy the ACME challenge path** to `SSL_HTTP_CHALLENGE_PORT` (default `9080`):
+
+```nginx
+server {
+    listen 80;
+    server_name webhooks.example.com;
+
+    location /.well-known/acme-challenge/ {
+        proxy_pass http://127.0.0.1:9080;
+    }
+}
+```
 
 **Notes:**
 
+- `SSL_HTTP_CHALLENGE_PORT` (default `9080`) is the internal port Caddy uses for the HTTP-01 challenge only; it does not need to be publicly accessible.
 - Certificates are stored in the `caddy_data` Docker volume and reused on restart.
 - Update `CLIENT_SERVER_URL` to `https://` when SSL is enabled.
 - The admin panel is available at `https://SSL_HOST:SERVER_PORT/admin/`.
@@ -273,6 +285,7 @@ cp target/.env.sample target/.env
 | `SERVER_PORT` | `3000` | Server HTTP port (or HTTPS port when `SSL_SUPPORTED=true`) |
 | `SSL_SUPPORTED` | `false` | Enable HTTPS via Caddy |
 | `SSL_HOST` | — | Public hostname for the TLS certificate (required when `SSL_SUPPORTED=true`) |
+| `SSL_HTTP_CHALLENGE_PORT` | `9080` | Internal port Caddy uses for the HTTP-01 ACME challenge (proxy from nginx port 80) |
 | `DB_PATH` | `/data/webhooks.db` | SQLite file path inside container |
 | `ADMIN_SECRET` | — | Protects admin endpoints — **change this** |
 | `SERVER_DEBUG` | `false` | Verbose logging: full request headers, body, returned/acked IDs |

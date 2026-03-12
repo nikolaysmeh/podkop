@@ -255,6 +255,7 @@ cp target/.env.sample target/.env
 | `CLI_SERVER_URL` | `http://localhost:3000` | Server URL used by the CLI (inside container) |
 | `MULTI_CLIENT_ENABLED` | `false` | Allow multiple clients to receive the same webhook |
 | `MAX_DELIVERIES_PER_WEBHOOK` | `1` | How many clients must ACK a webhook before it is deleted (only when `MULTI_CLIENT_ENABLED=true`) |
+| `WEBHOOK_ALLOWED_HOSTS` | — | Comma-separated list of hostnames that are allowed to send webhooks or poll (e.g. `webhooks.example.com,api.example.com`). Requests arriving on any other hostname receive `403`. Leave unset to allow all hosts. |
 
 ### Client (`client/.env`)
 

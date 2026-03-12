@@ -87,15 +87,14 @@ SSL_HOST=webhooks.example.com
 **How it works:**
 
 - Caddy obtains a TLS certificate from Let's Encrypt for `SSL_HOST` on first start.
-- Caddy listens on `SERVER_PORT` (HTTPS) and port `80` (ACME HTTP-01 challenge).
+- Certificate is obtained via **TLS-ALPN-01 challenge** on `SERVER_PORT` — no port 80 needed.
 - Node.js listens internally on `SERVER_PORT + 1` (not exposed outside the container).
 - The server is reachable at `https://SSL_HOST:SERVER_PORT`.
 
 **Requirements:**
 
 - `SSL_HOST` must be a public domain name that resolves to this host.
-- Port `80` and `SERVER_PORT` must be open on the host firewall.
-- Add `- "80:80"` to the server ports in `docker-compose.yml` (needed for the ACME HTTP-01 challenge). Alternatively, set `SERVER_PORT=443` — Caddy will then use the TLS-ALPN-01 challenge and does not need port 80.
+- **`SERVER_PORT` must be `443`** — the TLS-ALPN-01 challenge requires port 443 to be reachable from the internet (ACME spec). Port 80 is not used.
 
 **Notes:**
 

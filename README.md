@@ -32,15 +32,17 @@ External Service
 ## Quick Start
 
 ```bash
-# 1. Create per-service .env files from the samples
-cp server/.env.sample server/.env   # set ADMIN_SECRET here
-cp client/.env.sample client/.env
-cp target/.env.sample target/.env   # optional, defaults are fine
+# 1. Create the root .env (ports exposed on the host)
+cp .env.sample .env
 
-# 2. Start everything
+# 2. Create per-service .env files from the samples
+cp server/.env.sample server/.env   # set ADMIN_SECRET and other server settings here
+cp client/.env.sample client/.env
+
+# 3. Start everything
 docker-compose up --build -d
 
-# 3. Create a webhook endpoint
+# 4. Create a webhook endpoint
 docker-compose exec server node src/cli.js create-webhook mywebhook
 ```
 
@@ -79,9 +81,16 @@ The server ships a built-in web UI available at `http://your-server:PORT/admin/`
 Set `SSL_SUPPORTED=true` in `server/.env` to enable automatic HTTPS via [Caddy](https://caddyserver.com/),
 which runs inside the same container as the server.
 
+In `server/.env`:
 ```
 SSL_SUPPORTED=true
 SSL_HOST=webhooks.example.com
+```
+
+In root `.env` (sets the exposed ports):
+```
+SERVER_PORT=443
+SSL_HTTP_CHALLENGE_PORT=9080
 ```
 
 **How it works:**
@@ -260,32 +269,40 @@ The number of IDs per ACK request is capped by `BATCH_SIZE` (default: 10).
 
 ## Configuration
 
-Each service has its own `.env` file. Docker Compose loads the root `.env` first (if present), then the per-service `.env`, which overrides any matching variables from the root file.
+Configuration is split between two levels:
+
+- **Root `.env`** — port variables used by Docker Compose for host port mapping. These are also injected into the service containers.
+- **Per-service `.env` files** — app-level settings specific to each service.
 
 ```
-server/.env   ← server settings
-client/.env   ← client settings
-target/.env   ← target settings
+.env          ← host port mapping (SERVER_PORT, SSL_HTTP_CHALLENGE_PORT, TARGET_PORT)
+server/.env   ← server app settings
+client/.env   ← client app settings
+target/.env   ← (no additional settings beyond what's in root .env)
 ```
 
 Copy the samples to get started:
 
 ```bash
+cp .env.sample .env
 cp server/.env.sample server/.env
 cp client/.env.sample client/.env
-cp target/.env.sample target/.env
 ```
 
-> **Note:** The root `.env` is **deprecated** and will be removed in a future version. It is still supported for backward compatibility — if it exists, its values serve as defaults that per-service files can override.
+### Root (`.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERVER_PORT` | `3000` | Port exposed on the host for the server (HTTP, or HTTPS when `SSL_SUPPORTED=true` in `server/.env`) |
+| `SSL_HTTP_CHALLENGE_PORT` | `9080` | Port Caddy uses for the HTTP-01 ACME challenge (only when `SSL_SUPPORTED=true`). Proxy `/.well-known/acme-challenge/` from port 80. |
+| `TARGET_PORT` | `4000` | Port exposed on the host for the demo target service |
 
 ### Server (`server/.env`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVER_PORT` | `3000` | Server HTTP port (or HTTPS port when `SSL_SUPPORTED=true`) |
 | `SSL_SUPPORTED` | `false` | Enable HTTPS via Caddy |
 | `SSL_HOST` | — | Public hostname for the TLS certificate (required when `SSL_SUPPORTED=true`) |
-| `SSL_HTTP_CHALLENGE_PORT` | `9080` | Internal port Caddy uses for the HTTP-01 ACME challenge (proxy from nginx port 80) |
 | `DB_PATH` | `/data/webhooks.db` | SQLite file path inside container |
 | `ADMIN_SECRET` | — | Protects admin endpoints — **change this** |
 | `SERVER_DEBUG` | `false` | Verbose logging: full request headers, body, returned/acked IDs |

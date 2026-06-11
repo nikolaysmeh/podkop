@@ -26,7 +26,7 @@
  *   docker-compose exec server node src/cli.js delete-message mywebhook 42
  */
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
 const http = require('http');
 

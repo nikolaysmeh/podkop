@@ -3,7 +3,7 @@
 const { setupLogCapture } = require('./logs');
 setupLogCapture();
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
 const db  = require('./db');
 const app = require('./app');
